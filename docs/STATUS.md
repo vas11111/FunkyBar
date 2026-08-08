@@ -70,14 +70,19 @@ window server: 2 window(s) owned by this process
 all checks passed
 ```
 
-### Standing CPU
+### Standing cost
 
-See [BENCHMARK.md](BENCHMARK.md) for the current figure and method.
+| | SketchyBar today | funkybar M1 |
+| --- | --- | --- |
+| CPU, sustained | 2.3% of one P-core | **0.117%** (20x less) |
+| Memory, phys_footprint | 36 MB | **12 MB** (3x less) |
 
-The remaining cost is concentrated in one place: the `aerospace` provider still
-shells out, because AeroSpace exposes no API other than its CLI. At the default
-5 s interval that is 12 subprocesses a minute. Adding the push hook below
-removes them and lets the interval drop to a slow safety net.
+The plan's CPU target was under 0.05%, so this is close but **not there yet**.
+The expected culprit was the `aerospace` subprocess poll, but relaxing it from
+5 s to 60 s measured no improvement, so it is not the cost. About half the
+remainder is the `ports` scan running every 5 s, an interval that is arbitrary
+and easy to raise. See [BENCHMARK.md](BENCHMARK.md) for the method, the
+isolation experiment, and the paths to closing the gap.
 
 ## Not built yet
 
