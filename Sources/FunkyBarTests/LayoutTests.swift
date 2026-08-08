@@ -192,19 +192,42 @@ let layoutGroupTests = Suite("Layout groups") { s in
         t.expectEqual(try t.require(result.item("a")).frame.minX, 7)
     }
 
-    s.test("a group's margin does not swallow its children's margins") { t in
-        // The sketchybarrc carries a comment that brackets swallow their
-        // members' outer margins, forcing manual compensation. They do not here.
-        var child = makeItem("a", label: "AA")
-        child.margin = Insets(leading: 4, trailing: 4)
+    s.test("child margins separate siblings but not the group's edges") { t in
+        // The sketchybarrc this replaces carries a comment that brackets
+        // swallow their members' outer margins. That is the correct behaviour,
+        // not a wart: a child's margin exists to separate it from siblings, so
+        // at the group's edges there is no sibling and no space is owed.
+        // Counting them padded the inside of the pill with space belonging
+        // outside it, which made every group 6pt wider than sketchybar's.
+        var a = makeItem("a", label: "AA")          // 10 wide
+        a.margin = Insets(leading: 4, trailing: 4)
+        var b = makeItem("b", label: "BB")          // 10 wide
+        b.margin = Insets(leading: 4, trailing: 4)
 
-        let group = ResolvedGroup(id: "pill", margin: Insets(leading: 10, trailing: 10), items: [child])
+        let group = ResolvedGroup(id: "pill", margin: Insets(leading: 10, trailing: 10), items: [a, b])
         let result = layout([.group(group)], bar: bar(padding: .zero))
 
         let groupFrame = try t.require(result.group("pill"))
-        t.expectEqual(groupFrame.frame.minX, 10, "group margin positions the group")
-        t.expectEqual(groupFrame.frame.width, 18, "child margins live inside the group")
-        t.expectEqual(try t.require(result.item("a")).frame.minX, 14)
+        let frameA = try t.require(result.item("a"))
+        let frameB = try t.require(result.item("b"))
+
+        t.expectEqual(groupFrame.frame.minX, 10, "the group's own margin positions it")
+        // 10 + (4 trailing + 4 leading) + 10 = 28. The outer 4s are excluded.
+        t.expectEqual(groupFrame.frame.width, 28, "edge margins must stay outside the group")
+        t.expectEqual(frameA.frame.minX, 10, "the first child is flush with the group's edge")
+        t.expectEqual(frameB.frame.maxX, groupFrame.frame.maxX, "so is the last")
+        t.expectEqual(frameB.frame.minX - frameA.frame.maxX, 8, "interior gap is 4 + 4")
+    }
+
+    s.test("a single child sits flush inside its group") { t in
+        var only = makeItem("a", label: "AA")
+        only.margin = Insets(leading: 7, trailing: 7)
+
+        let group = ResolvedGroup(id: "pill", items: [only])
+        let result = layout([.group(group)], bar: bar(padding: .zero))
+
+        t.expectEqual(try t.require(result.group("pill")).frame.width, 10,
+                      "with no siblings, no margin applies at all")
     }
 
     s.test("a group reports its children in order") { t in
@@ -494,7 +517,70 @@ let layoutIntegrationTests = Suite("Layout integration") { s in
     }
 }
 
+let hitTestTests = Suite("Hit testing") { s in
+
+    s.test("a point inside an item returns that item") { t in
+        var a = makeItem("a", label: "AAAA")   // 20 wide
+        a.style = pillStyle(height: 24)
+        let result = layout([.item(a)], bar: bar(height: 40, padding: .zero))
+        let frame = try t.require(result.item("a"))
+
+        t.expectEqual(result.hitTest(CGPoint(x: frame.frame.midX, y: 20)), "a")
+    }
+
+    s.test("the background box is clickable, not just the text box") { t in
+        // The pill is 24 tall but the text is only 10, so most of the visible
+        // target is background. Hit testing only the content box would make the
+        // top and bottom of every pill dead.
+        var a = makeItem("a", label: "AAAA")
+        a.style = pillStyle(height: 24, padding: Insets(horizontal: 8))
+        let result = layout([.item(a)], bar: bar(height: 40, padding: .zero))
+        let frame = try t.require(result.item("a"))
+
+        t.expect(frame.background.height > frame.frame.height, "precondition: pill is taller than its text")
+        t.expectEqual(result.hitTest(CGPoint(x: frame.background.midX, y: frame.background.minY + 2)), "a")
+        t.expectEqual(result.hitTest(CGPoint(x: frame.background.minX + 2, y: 20)), "a",
+                      "style padding is part of the target")
+    }
+
+    s.test("a point outside every item returns nothing") { t in
+        let result = layout([.item(makeItem("a", label: "AA"))], bar: bar(height: 40, padding: .zero))
+        t.expectNil(result.hitTest(CGPoint(x: 500, y: 20)))
+        t.expectNil(result.hitTest(CGPoint(x: 5, y: 39)), "above the pill")
+    }
+
+    s.test("each item in a group is individually addressable") { t in
+        // Every workspace number has to be separately clickable, since each one
+        // switches to a different workspace.
+        let group = ResolvedGroup(
+            id: "pill",
+            items: (1 ... 7).map { makeItem("space.\($0)", icon: "\($0)") }
+        )
+        let result = layout([.group(group)], bar: bar(height: 40, padding: .zero))
+
+        for n in 1 ... 7 {
+            let frame = try t.require(result.item("space.\(n)"))
+            t.expectEqual(result.hitTest(CGPoint(x: frame.frame.midX, y: 20)), "space.\(n)")
+        }
+    }
+
+    s.test("the right side is hit-testable at its real coordinates") { t in
+        // A regression guard for coordinate-space mistakes: right-anchored
+        // items sit near the far edge, so an origin or flip error shows up here
+        // long before it shows up on the left.
+        var clock = makeItem("clock", label: "19:13  Sat 08", position: .right)
+        clock.style = pillStyle(height: 24)
+        let result = layout([.item(clock)], bar: bar(height: 40, padding: Insets(leading: 10, trailing: 10)), width: 1512)
+        let frame = try t.require(result.item("clock"))
+
+        t.expect(frame.frame.minX > 1300, "clock should be near the right edge, got \(frame.frame.minX)")
+        t.expectEqual(result.hitTest(CGPoint(x: frame.frame.midX, y: 20)), "clock")
+        t.expectNil(result.hitTest(CGPoint(x: frame.frame.minX - 30, y: 20)))
+    }
+}
+
 let layoutSuites: [Suite] = [
+    hitTestTests,
     layoutMeasurementTests,
     layoutOrderingTests,
     layoutGroupTests,

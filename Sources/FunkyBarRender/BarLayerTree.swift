@@ -242,10 +242,13 @@ final class BarLayerTree {
             child.contents = cgImage
             child.contentsGravity = .resizeAspect
 
+            // Artwork pixel dimensions map to points 1:1 before `scale`, which
+            // is what sketchybar does: a 40px coin at scale 0.38 is 15.2pt.
+            // Dividing by the backing scale here would halve every image on a
+            // retina display.
             let natural = CGSize(width: cgImage.width, height: cgImage.height)
-            let scale = CGFloat(image.scale)
-            let size = CGSize(width: natural.width * scale / self.scale,
-                              height: natural.height * scale / self.scale)
+            let factor = CGFloat(image.scale)
+            let size = CGSize(width: natural.width * factor, height: natural.height * factor)
 
             // Leading edge, vertically centred: the artwork is an icon sitting
             // to the left of the label, which reserves room with its padding.

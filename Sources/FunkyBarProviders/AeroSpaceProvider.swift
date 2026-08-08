@@ -127,6 +127,9 @@ public final class PushProvider: Provider {
     private let seedSeparator: String?
     private let seedKeys: [String]
     private let seedField: String
+    /// Named commands a click can invoke, e.g. `toggle` -> a shell line.
+    private let commands: [String: String]
+    private let runner = ProcessRunner(timeout: 10)
     private var emit: (@MainActor (ProviderUpdate) -> Void)?
     private var values: [String: String] = [:]
     private var perItem: [String: [String: String]] = [:]
@@ -138,6 +141,24 @@ public final class PushProvider: Provider {
         seedSeparator = context.string("seed_separator")
         seedKeys = context.strings("seed_keys") ?? []
         seedField = context.string("seed_field") ?? "value"
+
+        var table: [String: String] = [:]
+        if case .table(let entries)? = context.options["commands"]?.value {
+            for (name, node) in entries.entries {
+                if case .string(let line) = node.value { table[name] = line }
+            }
+        }
+        commands = table
+    }
+
+    /// Runs the shell line bound to this command name.
+    ///
+    /// Until the socket layer lands this is how an external app is driven, and
+    /// it is what makes `on_click = "status:toggle"` do something rather than
+    /// silently resolve to nothing.
+    public func handle(command: String) {
+        guard let line = commands[command] else { return }
+        runner.run(line) { _ in }
     }
 
     public func start(emit: @escaping @MainActor (ProviderUpdate) -> Void) {

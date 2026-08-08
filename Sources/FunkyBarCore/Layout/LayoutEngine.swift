@@ -87,6 +87,20 @@ public struct BarLayout: Equatable, Sendable {
     public var groups: [GroupFrame]
 
     public func item(_ id: String) -> ItemFrame? { items.first { $0.id == id } }
+
+    /// The id of the topmost item under `point`, in bar coordinates.
+    ///
+    /// A pure function of the layout so it can be tested without a window.
+    /// Later siblings win where boxes overlap, matching draw order.
+    public func hitTest(_ point: CGPoint) -> String? {
+        for frame in items.reversed() {
+            let box = frame.background == .zero
+                ? frame.frame
+                : frame.background.union(frame.frame)
+            if box.contains(point) { return frame.id }
+        }
+        return nil
+    }
     public func group(_ id: String) -> GroupFrame? { groups.first { $0.id == id } }
 
     /// Total width occupied on one side, useful for overflow checks.
@@ -178,8 +192,20 @@ public enum LayoutEngine {
             return measure(item, measuring: measuring)
         case .group(let group):
             let children = group.visibleItems.map { measure($0, measuring: measuring) }
+
+            // A child's margin separates it from its *siblings*, so it applies
+            // between children but not at the group's own edges. Counting the
+            // first child's leading margin and the last child's trailing margin
+            // would pad the inside of the pill with space that belongs outside
+            // it, which is what "brackets swallow their members' outer margins"
+            // describes in the sketchybarrc this replaces.
             let spacing = group.spacing * Double(max(0, children.count - 1))
-            let childrenWidth = children.reduce(0) { $0 + $1.outerWidth } + spacing
+            var childrenWidth = children.reduce(0) { $0 + $1.width } + spacing
+            for (index, child) in children.enumerated() {
+                if index > 0 { childrenWidth += child.margin.leading }
+                if index < children.count - 1 { childrenWidth += child.margin.trailing }
+            }
+
             let childrenHeight = children.map(\.height).max() ?? 0
             return Measured(
                 width: childrenWidth + group.padding.horizontal,
@@ -241,14 +267,20 @@ public enum LayoutEngine {
 
             var cursor = originX + group.padding.leading
             var childIDs: [String] = []
+            let children = group.visibleItems
 
-            for (child, childSize) in zip(group.visibleItems, measured.children) {
-                cursor += childSize.margin.leading
+            for (index, pair) in zip(children, measured.children).enumerated() {
+                let (child, childSize) = pair
+                // Mirrors the measurement above: edge margins are not interior.
+                if index > 0 { cursor += childSize.margin.leading }
                 items.append(
                     placeItem(child, measured: childSize, originX: cursor, bar: bar, measuring: measuring)
                 )
                 childIDs.append(child.id)
-                cursor += childSize.width + childSize.margin.trailing + group.spacing
+                cursor += childSize.width
+                if index < children.count - 1 {
+                    cursor += childSize.margin.trailing + group.spacing
+                }
             }
 
             groups.append(

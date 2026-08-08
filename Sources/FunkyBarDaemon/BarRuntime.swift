@@ -194,10 +194,33 @@ final class BarRuntime {
 
     // MARK: - Events
 
+    /// Set FUNKYBAR_DEBUG_EVENTS=1 to trace input on stderr. Without this
+    /// there is no way to tell "the click never arrived" from "the click
+    /// arrived and the action did nothing".
+    private static let traceEvents = ProcessInfo.processInfo.environment["FUNKYBAR_DEBUG_EVENTS"] == "1"
+
     private func handle(_ event: BarEvent) {
+        if Self.traceEvents {
+            FileHandle.standardError.write(Data("event: \(event.itemID) \(event.kind)\n".utf8))
+        }
         guard case .click(let button) = event.kind else { return }
-        guard let item = config.allItems.first(where: { $0.id == event.itemID }) else { return }
-        guard let action = item.actions[button] ?? (button == .left ? item.actions[.left] : nil) else { return }
+        guard let item = config.allItems.first(where: { $0.id == event.itemID }) else {
+            if Self.traceEvents {
+                FileHandle.standardError.write(Data("  no item '\(event.itemID)'\n".utf8))
+            }
+            return
+        }
+        guard let action = item.actions[button] else {
+            if Self.traceEvents {
+                let available = item.actions.keys.map(\.rawValue).sorted().joined(separator: ", ")
+                FileHandle.standardError.write(
+                    Data("  no \(button.rawValue) action on '\(item.id)' (has: \(available))\n".utf8))
+            }
+            return
+        }
+        if Self.traceEvents {
+            FileHandle.standardError.write(Data("  action: \(action)\n".utf8))
+        }
 
         switch action {
         case .shell(let command):
@@ -268,7 +291,14 @@ final class BarRuntime {
     /// unresolved image paths without needing to look at the screen.
     var dump: String {
         let nodes = ConfigResolver.resolve(config, inputs: inputs)
+        let layout = controller.currentLayout
         var lines: [String] = []
+
+        func box(_ id: String) -> String {
+            guard let frame = layout?.item(id) ?? nil else { return "" }
+            let f = frame.frame
+            return String(format: "x=%.0f w=%.0f  ", f.minX, f.width)
+        }
 
         func describe(_ item: ResolvedItem, indent: String) {
             var parts: [String] = []
@@ -286,8 +316,8 @@ final class BarRuntime {
             if !item.style.isVisible && !item.hasIcon && !item.hasLabel {
                 parts.append("<nothing to draw>")
             }
-            lines.append("\(indent)\(item.id.padding(toLength: 22, withPad: " ", startingAt: 0)) "
-                         + parts.joined(separator: "  "))
+            lines.append("\(indent)\(item.id.padding(toLength: 20, withPad: " ", startingAt: 0)) "
+                         + box(item.id) + parts.joined(separator: "  "))
         }
 
         for node in nodes {
@@ -295,7 +325,11 @@ final class BarRuntime {
             case .item(let item):
                 describe(item, indent: "  ")
             case .group(let group):
-                lines.append("  [\(group.id)] \(group.position.rawValue)")
+                var groupBox = ""
+                if let frame = layout?.group(group.id) {
+                    groupBox = String(format: "  x=%.0f w=%.0f", frame.frame.minX, frame.frame.width)
+                }
+                lines.append("  [\(group.id)] \(group.position.rawValue)\(groupBox)")
                 for item in group.items { describe(item, indent: "    ") }
             }
         }

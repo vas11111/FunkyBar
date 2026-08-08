@@ -197,6 +197,13 @@ margin   = { left = 3, right = 6 }
   channel   = "status"
   seed_file = "~/.local/state/status-state"
 
+  # Until the socket layer lands, a click drives the app directly. StatusApp.app
+  # parses these before NSApplication starts, so neither spawns a second
+  # instance. See INTEGRATION.md in the sketchybar config.
+  [item.provider.commands]
+  toggle   = "/Applications/StatusApp.app/Contents/MacOS/STATUS --toggle"
+  settings = "/Applications/StatusApp.app/Contents/MacOS/STATUS --settings"
+
   [item.on_click]
   left  = "status:toggle"
   right = "status:settings"

@@ -21,7 +21,7 @@ final class BarDisplay {
     let view: BarView
     let tree: BarLayerTree
     private(set) var screen: NSScreen
-    private var layout: BarLayout?
+    private(set) var lastLayout: BarLayout?
 
     init(screen: NSScreen, config: BarConfig) {
         self.screen = screen
@@ -73,19 +73,13 @@ final class BarDisplay {
             width: panel.frame.width,
             measuring: measuring
         )
-        layout = result
+        lastLayout = result
         tree.apply(layout: result, nodes: nodes)
     }
 
     /// The topmost item under a point, or nil.
     func hitTest(_ point: CGPoint) -> String? {
-        guard let layout else { return nil }
-        // Reverse so later siblings win where backgrounds overlap.
-        for frame in layout.items.reversed() {
-            let box = frame.background == .zero ? frame.frame : frame.background.union(frame.frame)
-            if box.contains(point) { return frame.id }
-        }
-        return nil
+        lastLayout?.hitTest(point)
     }
 
     func show() {
@@ -255,6 +249,11 @@ public final class BarController {
     }
 
     public var displayCount: Int { displays.count }
+
+    /// The most recent layout for the main display, for diagnostics.
+    public var currentLayout: BarLayout? {
+        displays.values.first?.lastLayout
+    }
 }
 
 extension NSScreen {
