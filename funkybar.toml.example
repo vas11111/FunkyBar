@@ -1,0 +1,283 @@
+# funkybar
+#
+# A direct port of the sketchybarrc in dotfiles/sketchybar, with the shell
+# plugins replaced by native providers.
+#
+# Two substitution syntaxes, deliberately distinct:
+#   $name      a theme token, substituted once at load. Must be the whole value.
+#   {field}    a provider field, substituted on every update. `{{` is a literal brace.
+# That is why "${price}" is unambiguous: the $ is literal because the value is
+# not exactly a token reference, and {price} interpolates.
+
+[bar]
+height   = 36
+edge     = "top"
+offset   = { x = 0, y = 4 }
+padding  = { left = 10, right = 10 }
+color    = "#00000000"
+displays = "all"
+sticky   = true
+topmost  = "window"
+
+# ==============================================================================
+# Theme: Cursor Dark (#141414) with a warm amber accent
+# ==============================================================================
+[theme]
+pill_bg     = "#141414"
+pill_border = "#3d2f1a"
+accent      = "#f4d35e"
+accent_dim  = "#7a6a4a"
+text        = "#f1d9a4"
+app_name    = "#ffb87c"
+
+ok    = "#56d364"
+warn  = "#d29922"
+error = "#ff7b72"
+idle  = "#6e7681"
+
+# A whole style table can be a token. `style = "$pill"` pulls this in.
+[theme.pill]
+color         = "$pill_bg"
+border_color  = "$pill_border"
+border_width  = 1
+corner_radius = 12
+height        = 24
+
+[theme.mono]
+family = "JetBrainsMono Nerd Font"
+style  = "Bold"
+size   = 14
+
+[theme.mono_small]
+family = "JetBrainsMono Nerd Font"
+style  = "Bold"
+size   = 12
+
+# ==============================================================================
+# Defaults, inherited by every item
+# ==============================================================================
+[defaults]
+margin = { left = 3, right = 3 }
+
+[defaults.icon]
+font    = "$mono"
+color   = "$text"
+padding = { left = 10, right = 4 }
+
+[defaults.label]
+font    = "$mono_small"
+color   = "$text"
+padding = { left = 4, right = 10 }
+
+[defaults.style]
+color         = "$pill_bg"
+border_color  = "$pill_border"
+border_width  = 1
+corner_radius = 12
+height        = 24
+
+# ==============================================================================
+# LEFT
+# ==============================================================================
+
+# One item per AeroSpace workspace. `repeat = "workspace"` is expanded at
+# runtime from what the provider reports, so a workspace that appears or
+# empties is reflected without a reload.
+[[group]]
+id       = "workspaces_pill"
+position = "left"
+style    = "$pill"
+
+  [[group.item]]
+  id       = "space"
+  provider = "aerospace"
+  repeat   = "workspace"
+  on_click = { workspace = "{workspace}" }
+
+    [group.item.icon]
+    text    = "{workspace}"
+    font    = "$mono"
+    padding = { left = 7, right = 7 }
+
+    [group.item.label]
+    drawing = false
+
+    [group.item.style]
+    drawing = false
+
+    # Selected by the provider's `state` field.
+    [group.item.states.active]
+    icon_color = "$accent"
+
+    [group.item.states.inactive]
+    icon_color = "$accent_dim"
+
+[[group]]
+id       = "app_pill"
+position = "left"
+style    = "$pill"
+margin   = { left = 8, right = 3 }
+
+  [[group.item]]
+  id   = "chevron"
+
+    [group.item.icon]
+    text    = "›"
+    color   = "$accent_dim"
+    padding = { left = 12, right = 4 }
+
+    [group.item.label]
+    drawing = false
+
+    [group.item.style]
+    drawing = false
+
+  [[group.item]]
+  id       = "front_app"
+  provider = "frontApp"
+
+    [group.item.icon]
+    drawing = false
+
+    [group.item.label]
+    text    = "{name}"
+    color   = "$app_name"
+    padding = { left = 4, right = 12 }
+    font    = { family = "JetBrainsMono Nerd Font", style = "Bold", size = 13 }
+
+    [group.item.style]
+    drawing = false
+
+# ==============================================================================
+# RIGHT, declared in visual left-to-right order
+#
+# Upstream inserts `right` items rightmost-first, which is why the sketchybarrc
+# has to declare clock, battery, meter, status to get this order. Here the
+# order you write is the order you see.
+# ==============================================================================
+
+# Replaces ports.sh: no lsof, no pgrep, no python3. Listening sockets are
+# read in-process via proc_pidinfo.
+[[item]]
+id       = "ports"
+position = "right"
+interval = "5s"
+icon     = "3"
+
+  [item.provider]
+  kind  = "ports"
+  ports = [3000, 3001, 5173, 8080, 8081, 8082, 8083, 8084]
+  watch = ["proc-a", "proc-b"]
+
+  [item.popup]
+  on      = "click"
+  dismiss = ["mouse_exit", "click_outside"]
+
+  [item.states.chain]
+  color = "$ok"
+
+  [item.states.ports]
+  color = "$warn"
+
+  [item.states.idle]
+  color = "$idle"
+
+# Replaces status.sh and its safety poll. StatusApp.app pushes state over the socket;
+# the connection itself is the liveness signal.
+[[item]]
+id       = "status"
+position = "right"
+margin   = { left = 3, right = 6 }
+
+  [item.provider]
+  kind      = "push"
+  channel   = "status"
+  seed_file = "~/.local/state/status-state"
+
+  [item.on_click]
+  left  = "status:toggle"
+  right = "status:settings"
+
+  [item.states.ON]
+  icon  = "9"
+  label = "STATUS"
+  color = "$ok"
+
+  [item.states.CONNECTING]
+  icon  = "9"
+  label = "…"
+  color = "$warn"
+
+  [item.states.ERROR]
+  icon  = "9"
+  label = "ERR"
+  color = "$error"
+
+  [item.states.OFF]
+  icon  = "E"
+  label = "OFF"
+  color = "$idle"
+
+[[group]]
+id       = "meters_pill"
+position = "right"
+style    = "$pill"
+
+  [[group.item]]
+  id       = "meter"
+  repeat   = ["c", "b", "a"]
+
+    [group.item.provider]
+    kind    = "push"
+    channel = "meter"
+
+    [group.item.icon]
+    drawing = false
+
+    [group.item.label]
+    text    = "${price}"
+    padding = { left = 20, right = 8 }
+
+    [group.item.style]
+    drawing       = false
+    border_width  = 0
+
+    [group.item.style.image]
+    path  = "~/.config/funkybar/icons/meter/{repeat}.png"
+    scale = 0.38
+
+# Event-driven through IOPSNotificationCreateRunLoopSource. No polling, no pmset.
+[[item]]
+id       = "battery"
+position = "right"
+margin   = { left = 6, right = 3 }
+
+  [item.icon]
+  padding = { left = 10, right = 4 }
+
+  [item.label]
+  text    = "{percent}%"
+  padding = { left = 4, right = 10 }
+
+  [item.provider]
+  kind     = "battery"
+  ramp     = ["3", "B", "E", "0", "2"]
+  charging = "4"
+
+[[item]]
+id       = "clock"
+position = "right"
+
+  [item.icon]
+  drawing = false
+
+  [item.label]
+  text    = "{time}  {date}"
+  padding = { left = 12, right = 12 }
+
+  [item.provider]
+  kind = "clock"
+  # One timer aligned to the minute boundary, shared with every other
+  # interval provider, instead of a 10-second poll that forks three processes.
+  time = "HH:mm"
+  date = "EEE dd"

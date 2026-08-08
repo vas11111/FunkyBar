@@ -5,6 +5,7 @@ import TestKit
 // discovery, and an explicit list is easier to reason about than reflection.
 let allSuites: [Suite] =
     tomlSuites
+    + configSuites
 
 let filter = CommandLine.arguments.dropFirst().first
 exit(TestRunner.run(allSuites, filter: filter))
