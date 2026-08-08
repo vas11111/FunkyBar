@@ -137,6 +137,10 @@ final class TextLayer: CALayer {
     var color: CGColor = NSColor.white.cgColor {
         didSet { setNeedsDisplay() }
     }
+    /// Mirrors sketchybar's `CGContextSetAllowsFontSmoothing`, off by default.
+    var allowsFontSmoothing = false {
+        didSet { setNeedsDisplay() }
+    }
 
     override init() {
         super.init()
@@ -151,6 +155,7 @@ final class TextLayer: CALayer {
         if let other = layer as? TextLayer {
             shaped = other.shaped
             color = other.color
+            allowsFontSmoothing = other.allowsFontSmoothing
         }
     }
 
@@ -160,10 +165,10 @@ final class TextLayer: CALayer {
         guard let shaped else { return }
 
         ctx.saveGState()
-        ctx.setAllowsFontSmoothing(true)
-        ctx.setShouldSmoothFonts(false)   // stem darkening looks wrong on a translucent bar
-        ctx.setAllowsAntialiasing(true)
-        ctx.setShouldAntialias(true)
+        // sketchybar sets only this one and leaves antialiasing at its default
+        // (src/context.c). Matching that exactly matters: smoothing alters stem
+        // weight without altering any metric.
+        ctx.setAllowsFontSmoothing(allowsFontSmoothing)
         ctx.textMatrix = .identity
         ctx.setFillColor(color)
 

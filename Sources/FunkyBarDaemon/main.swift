@@ -34,6 +34,7 @@ if arguments.contains("--help") || arguments.contains("-h") {
       --duration SECONDS  run for a fixed time, then exit (for testing)
       --selftest          start, verify the window is really on screen, exit
       --dump              print what every item will draw, then exit
+      --dump-json         same, machine-readable (used by funkybar-measure)
       --version
     """)
     exit(0)
@@ -79,13 +80,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let duration: Double?
     let selfTest: Bool
     let dump: Bool
+    let dumpJSON: Bool
 
-    init(runtime: BarRuntime, configPath: String, duration: Double?, selfTest: Bool, dump: Bool) {
+    init(runtime: BarRuntime, configPath: String, duration: Double?, selfTest: Bool, dump: Bool, dumpJSON: Bool) {
         self.runtime = runtime
         self.configPath = configPath
         self.duration = duration
         self.selfTest = selfTest
         self.dump = dump
+        self.dumpJSON = dumpJSON
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -101,7 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if dump {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 MainActor.assumeIsolated {
-                    print(self.runtime.dump)
+                    print(self.dumpJSON ? self.runtime.dumpJSON : self.runtime.dump)
                     self.runtime.stop()
                     exit(0)
                 }
@@ -140,7 +143,8 @@ let delegate = AppDelegate(
     configPath: configPath,
     duration: value(after: "--duration").flatMap(Double.init),
     selfTest: arguments.contains("--selftest"),
-    dump: arguments.contains("--dump")
+    dump: arguments.contains("--dump") || arguments.contains("--dump-json"),
+    dumpJSON: arguments.contains("--dump-json")
 )
 app.delegate = delegate
 app.run()

@@ -67,6 +67,7 @@ final class BarDisplay {
     }
 
     func apply(nodes: [ResolvedNode], config: BarConfig, measuring: any TextMeasuring) {
+        tree.allowsFontSmoothing = config.fontSmoothing
         let result = LayoutEngine.layout(
             nodes: nodes,
             bar: config,

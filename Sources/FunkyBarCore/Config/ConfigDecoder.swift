@@ -64,7 +64,7 @@ public enum ConfigDecoder {
     private static let barKeys: Set<String> = [
         "height", "edge", "position", "axis", "offset", "margin", "padding", "color",
         "corner_radius", "corner", "border_color", "border_width", "blur_radius",
-        "displays", "sticky", "topmost", "show_in_fullscreen", "hover",
+        "displays", "sticky", "topmost", "show_in_fullscreen", "hover", "font_smoothing",
     ]
 
     private static func decodeBar(_ reader: ConfigReader) -> BarConfig {
@@ -90,6 +90,7 @@ public enum ConfigDecoder {
         if let sticky = reader.bool("sticky") { bar.sticky = sticky }
         if let topmost = reader.enumeration("topmost", as: TopmostPolicy.self) { bar.topmost = topmost }
         if let value = reader.bool("show_in_fullscreen") { bar.showInFullscreen = value }
+        if let value = reader.bool("font_smoothing") { bar.fontSmoothing = value }
 
         if let text = reader.string("displays") {
             if let selector = DisplaySelector.parse(text) {

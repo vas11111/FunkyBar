@@ -39,6 +39,7 @@ final class BarLayerTree {
 
     private let shaper = CoreTextShaper()
     private var scale: CGFloat = 2
+    var allowsFontSmoothing = false
 
     init(root: CALayer) {
         self.root = root
@@ -210,6 +211,7 @@ final class BarLayerTree {
     private func makeTextLayer() -> TextLayer {
         let layer = TextLayer()
         layer.contentsScale = scale
+        layer.allowsFontSmoothing = allowsFontSmoothing
         textLayer.addSublayer(layer)
         return layer
     }

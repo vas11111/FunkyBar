@@ -46,6 +46,13 @@ public struct BarConfig: Equatable, Sendable {
     public var sticky: Bool = true
     public var topmost: TopmostPolicy = .window
     public var showInFullscreen: Bool = false
+    /// Whether glyph rendering may apply font smoothing.
+    ///
+    /// sketchybar calls `CGContextSetAllowsFontSmoothing(ctx, false)` by
+    /// default (src/context.c). Smoothing changes stem weight without changing
+    /// any metric, so a bar can match pixel-for-pixel on geometry and still
+    /// look wrong if this differs.
+    public var fontSmoothing: Bool = false
     /// Upstream issue #774: guard against brushing the screen edge by accident.
     public var hoverActivationDelay: Double = 0
 

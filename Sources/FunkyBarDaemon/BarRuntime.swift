@@ -289,6 +289,84 @@ final class BarRuntime {
     ///
     /// This is the diagnostic that catches wrong glyphs, empty labels and
     /// unresolved image paths without needing to look at the screen.
+    /// Machine-readable form of `dump`, for funkybar-measure.
+    var dumpJSON: String {
+        let nodes = ConfigResolver.resolve(config, inputs: inputs)
+        let layout = controller.currentLayout
+        var entries: [String] = []
+
+        func quote(_ s: String) -> String {
+            var out = ""
+            for c in s.unicodeScalars {
+                switch c {
+                case "\"": out += "\\\""
+                case "\\": out += "\\\\"
+                case "\n": out += "\\n"
+                default:
+                    // Control characters must be escaped; everything else goes
+                    // out as raw UTF-8. A \u escape cannot carry a scalar above
+                    // U+FFFF without a surrogate pair, and emitting five hex
+                    // digits silently splits the glyph.
+                    if c.value < 0x20 {
+                        out += String(format: "\\u%04x", c.value)
+                    } else {
+                        out.unicodeScalars.append(c)
+                    }
+                }
+            }
+            return "\"\(out)\""
+        }
+
+        func font(_ f: FontSpec) -> String { "\(f.family):\(f.style):\(f.size)" }
+
+        func emit(_ item: ResolvedItem) {
+            let frame = layout?.item(item.id)
+            var fields: [String] = []
+            fields.append("\"id\":\(quote(item.id))")
+            fields.append("\"kind\":\"item\"")
+            if let frame {
+                fields.append(String(format: "\"x\":%.2f,\"w\":%.2f", frame.frame.minX, frame.frame.width))
+                fields.append(String(format: "\"bg_h\":%.2f", frame.background.height))
+            }
+            fields.append("\"icon\":\(quote(item.icon))")
+            fields.append("\"icon_color\":\(quote(item.iconColor.hexString))")
+            fields.append("\"icon_font\":\(quote(font(item.iconFont)))")
+            fields.append("\"icon_drawing\":\(item.iconDrawing)")
+            fields.append("\"label\":\(quote(item.label))")
+            fields.append("\"label_color\":\(quote(item.labelColor.hexString))")
+            fields.append("\"label_font\":\(quote(font(item.labelFont)))")
+            fields.append("\"label_drawing\":\(item.labelDrawing)")
+            fields.append("\"bg_drawing\":\(item.style.isVisible)")
+            fields.append("\"bg_color\":\(quote(item.style.color.hexString))")
+            fields.append("\"bg_border\":\(quote(item.style.borderColor.hexString))")
+            fields.append(String(format: "\"bg_border_w\":%.2f", item.style.borderWidth))
+            fields.append(String(format: "\"bg_radius\":%.2f", item.style.corner.radius))
+            entries.append("{" + fields.joined(separator: ",") + "}")
+        }
+
+        for node in nodes {
+            switch node {
+            case .item(let item):
+                emit(item)
+            case .group(let group):
+                let frame = layout?.group(group.id)
+                var fields: [String] = ["\"id\":\(quote(group.id))", "\"kind\":\"group\""]
+                if let frame {
+                    fields.append(String(format: "\"x\":%.2f,\"w\":%.2f", frame.frame.minX, frame.frame.width))
+                    fields.append(String(format: "\"bg_h\":%.2f", frame.background.height))
+                }
+                fields.append("\"bg_drawing\":\(group.style.isVisible)")
+                fields.append("\"bg_color\":\(quote(group.style.color.hexString))")
+                fields.append("\"bg_border\":\(quote(group.style.borderColor.hexString))")
+                fields.append(String(format: "\"bg_border_w\":%.2f", group.style.borderWidth))
+                fields.append(String(format: "\"bg_radius\":%.2f", group.style.corner.radius))
+                entries.append("{" + fields.joined(separator: ",") + "}")
+                for item in group.items { emit(item) }
+            }
+        }
+        return "[" + entries.joined(separator: ",\n") + "]"
+    }
+
     var dump: String {
         let nodes = ConfigResolver.resolve(config, inputs: inputs)
         let layout = controller.currentLayout
