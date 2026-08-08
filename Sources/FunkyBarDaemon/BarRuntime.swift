@@ -262,6 +262,46 @@ final class BarRuntime {
 
     var displayCount: Int { controller.displayCount }
 
+    /// What each item will actually draw, with provider values folded in.
+    ///
+    /// This is the diagnostic that catches wrong glyphs, empty labels and
+    /// unresolved image paths without needing to look at the screen.
+    var dump: String {
+        let nodes = ConfigResolver.resolve(config, inputs: inputs)
+        var lines: [String] = []
+
+        func describe(_ item: ResolvedItem, indent: String) {
+            var parts: [String] = []
+            if item.hasIcon {
+                let codes = item.icon.unicodeScalars
+                    .map { String(format: "U+%04X", $0.value) }.joined(separator: " ")
+                parts.append("icon=\(item.icon.debugDescription) [\(codes)]")
+            }
+            if item.hasLabel { parts.append("label=\(item.label.debugDescription)") }
+            if let image = item.style.image {
+                let path = image.resolvedPath ?? "<unresolved>"
+                let exists = FileManager.default.fileExists(atPath: path) ? "ok" : "MISSING"
+                parts.append("image=\(path) (\(exists), scale \(image.scale))")
+            }
+            if !item.style.isVisible && !item.hasIcon && !item.hasLabel {
+                parts.append("<nothing to draw>")
+            }
+            lines.append("\(indent)\(item.id.padding(toLength: 22, withPad: " ", startingAt: 0)) "
+                         + parts.joined(separator: "  "))
+        }
+
+        for node in nodes {
+            switch node {
+            case .item(let item):
+                describe(item, indent: "  ")
+            case .group(let group):
+                lines.append("  [\(group.id)] \(group.position.rawValue)")
+                for item in group.items { describe(item, indent: "    ") }
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
     var status: String {
         """
         displays:  \(controller.displayCount)

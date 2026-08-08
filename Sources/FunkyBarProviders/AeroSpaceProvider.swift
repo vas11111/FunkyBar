@@ -124,6 +124,9 @@ public final class PushProvider: Provider {
     public let channel: String
 
     private let seedFile: String?
+    private let seedSeparator: String?
+    private let seedKeys: [String]
+    private let seedField: String
     private var emit: (@MainActor (ProviderUpdate) -> Void)?
     private var values: [String: String] = [:]
     private var perItem: [String: [String: String]] = [:]
@@ -132,6 +135,9 @@ public final class PushProvider: Provider {
         itemID = context.itemID
         channel = context.string("channel") ?? context.itemID
         seedFile = context.string("seed_file").map { ($0 as NSString).expandingTildeInPath }
+        seedSeparator = context.string("seed_separator")
+        seedKeys = context.strings("seed_keys") ?? []
+        seedField = context.string("seed_field") ?? "value"
     }
 
     public func start(emit: @escaping @MainActor (ProviderUpdate) -> Void) {
@@ -139,7 +145,13 @@ public final class PushProvider: Provider {
         seed()
     }
 
-    /// Cold start: a state file keeps the bar honest before the app connects.
+    /// Cold start from a state file, so the bar is honest before the app
+    /// connects rather than blank.
+    ///
+    /// Two shapes are supported. A bare scalar (`status-state` holds `OFF`)
+    /// becomes `state`/`value`. A delimited record (`meter` holds
+    /// `75.85 1916.11 64943`) is split and mapped positionally onto
+    /// `seed_keys`, so each clone of a repeated item gets its own field.
     private func seed() {
         guard let seedFile,
               let raw = try? String(contentsOfFile: seedFile, encoding: .utf8)
@@ -147,8 +159,28 @@ public final class PushProvider: Provider {
 
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        values["state"] = text
-        values["value"] = text
+
+        guard !seedKeys.isEmpty else {
+            values["state"] = text
+            values["value"] = text
+            return
+        }
+
+        // Default to whitespace, which is what `read -r a b c < file` does in
+        // the shell plugin this replaces.
+        let parts: [String]
+        if let seedSeparator {
+            parts = text.components(separatedBy: seedSeparator)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        } else {
+            parts = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        }
+
+        for (index, key) in seedKeys.enumerated() where index < parts.count {
+            guard !parts[index].isEmpty else { continue }
+            perItem["\(itemID).\(key)", default: [:]][seedField] = parts[index]
+        }
     }
 
     /// Called by the IPC layer when something pushes to this channel.

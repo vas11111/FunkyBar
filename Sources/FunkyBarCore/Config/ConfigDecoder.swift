@@ -190,7 +190,9 @@ public enum ConfigDecoder {
             reader.sink.error("image needs a 'path'", at: reader.location)
             return nil
         }
-        var image = ImageSpec(path: (path as NSString).expandingTildeInPath)
+        // The tilde is expanded after field substitution, since a template
+        // could in principle produce the leading "~".
+        var image = ImageSpec(path: Template(path))
         if let scale = reader.length("scale") { image.scale = scale }
         if let offset = reader.offset("offset") { image.offset = offset }
         return image

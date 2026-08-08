@@ -162,7 +162,10 @@ margin   = { left = 8, right = 3 }
 id       = "ports"
 position = "right"
 interval = "5s"
-icon     = "3"
+icon     = "󰒍"
+
+  [item.label]
+  text = "{label}"
 
   [item.provider]
   kind  = "ports"
@@ -199,22 +202,22 @@ margin   = { left = 3, right = 6 }
   right = "status:settings"
 
   [item.states.ON]
-  icon  = "9"
+  icon  = "󰦝"
   label = "STATUS"
   color = "$ok"
 
   [item.states.CONNECTING]
-  icon  = "9"
+  icon  = "󰦝"
   label = "…"
   color = "$warn"
 
   [item.states.ERROR]
-  icon  = "9"
+  icon  = "󰦝"
   label = "ERR"
   color = "$error"
 
   [item.states.OFF]
-  icon  = "E"
+  icon  = "󰦞"
   label = "OFF"
   color = "$idle"
 
@@ -225,11 +228,14 @@ style    = "$pill"
 
   [[group.item]]
   id       = "meter"
-  repeat   = ["c", "b", "a"]
+  repeat   = ["a", "b", "c"]
 
     [group.item.provider]
-    kind    = "push"
-    channel = "meter"
+    kind           = "push"
+    channel        = "meter"
+    seed_file      = "~/.local/state/meter"
+    seed_keys      = ["a", "b", "c"]
+    seed_field     = "price"
 
     [group.item.icon]
     drawing = false
@@ -239,7 +245,7 @@ style    = "$pill"
     padding = { left = 20, right = 8 }
 
     [group.item.style]
-    drawing       = false
+    color         = "#00000000"
     border_width  = 0
 
     [group.item.style.image]
@@ -253,6 +259,7 @@ position = "right"
 margin   = { left = 6, right = 3 }
 
   [item.icon]
+  text    = "{icon}"
   padding = { left = 10, right = 4 }
 
   [item.label]
@@ -261,8 +268,8 @@ margin   = { left = 6, right = 3 }
 
   [item.provider]
   kind     = "battery"
-  ramp     = ["3", "B", "E", "0", "2"]
-  charging = "4"
+  ramp     = ["󰂃", "󰁻", "󰁾", "󰂀", "󰂂"]
+  charging = "󰂄"
 
 [[item]]
 id       = "clock"

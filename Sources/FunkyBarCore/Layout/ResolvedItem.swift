@@ -112,6 +112,14 @@ public enum ItemResolver {
             if let color = state.labelColor { out.labelColor = color }
         }
 
+        // Image paths may reference provider fields, so resolve them here
+        // where the values are still in scope.
+        if var image = out.style.image {
+            let rendered = image.path.render(values)
+            image.resolvedPath = (rendered as NSString).expandingTildeInPath
+            out.style.image = image
+        }
+
         out.icon = truncate(out.icon, to: item.icon.maxCharacters)
         out.label = truncate(out.label, to: item.label.maxCharacters)
         return out

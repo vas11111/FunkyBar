@@ -64,15 +64,24 @@ public struct ShadowSpec: Equatable, Sendable {
 }
 
 public struct ImageSpec: Equatable, Sendable {
-    public var path: String
+    /// May reference provider fields, e.g. `icons/{repeat}.png`, so one
+    /// declaration can serve every clone of a repeated item.
+    public var path: Template
     public var scale: Double = 1
     public var offset: Offset = .zero
+    /// Filled in during resolution: `path` with fields substituted and `~`
+    /// expanded. The render layer has no access to provider values, so the
+    /// substitution has to happen before it gets here.
+    public var resolvedPath: String?
 
-    public init(path: String, scale: Double = 1, offset: Offset = .zero) {
+    public init(path: Template, scale: Double = 1, offset: Offset = .zero) {
         self.path = path
         self.scale = scale
         self.offset = offset
     }
+
+    /// What the render layer should load.
+    public var loadPath: String? { resolvedPath }
 }
 
 /// The background box drawn behind an item or group.
@@ -93,8 +102,15 @@ public struct StyleSpec: Equatable, Sendable {
 
     public init() {}
 
+    /// Whether this background contributes anything to the screen.
+    ///
+    /// An image counts on its own: a coin pill wants its icon drawn over a
+    /// transparent fill, and requiring a visible fill to get one would be a
+    /// trap.
     public var isVisible: Bool {
-        drawing && (!color.isTransparent || (borderWidth > 0 && !borderColor.isTransparent) || image != nil)
+        drawing && (!color.isTransparent
+                    || (borderWidth > 0 && !borderColor.isTransparent)
+                    || image != nil)
     }
 }
 

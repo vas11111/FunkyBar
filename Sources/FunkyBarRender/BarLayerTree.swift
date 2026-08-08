@@ -34,6 +34,8 @@ final class BarLayerTree {
     private var items: [String: ItemLayers] = [:]
     private var groups: [String: CALayer] = [:]
     private var imageCache: [String: CGImage] = [:]
+    /// Child artwork layers, keyed by the background layer that owns them.
+    private var imageLayers: [ObjectIdentifier: CALayer] = [:]
 
     private let shaper = CoreTextShaper()
     private var scale: CGFloat = 2
@@ -231,12 +233,32 @@ final class BarLayerTree {
         let borderColor = style.borderColor.cgColor
         if layer.borderColor != borderColor { layer.borderColor = borderColor }
 
-        if let image = style.image {
-            layer.contents = loadImage(image.path)
-            layer.contentsGravity = .resizeAspect
-            layer.masksToBounds = true
-        } else if layer.contents != nil {
-            layer.contents = nil
+        // The image is a child layer rather than the background's `contents`.
+        // Setting `contents` would stretch the artwork to the whole pill and
+        // leave `scale` and `offset` with nothing to act on; a child layer can
+        // be sized to the artwork's natural size and placed independently.
+        if let image = style.image, let path = image.loadPath, let cgImage = loadImage(path) {
+            let child = imageChild(of: layer)
+            child.contents = cgImage
+            child.contentsGravity = .resizeAspect
+
+            let natural = CGSize(width: cgImage.width, height: cgImage.height)
+            let scale = CGFloat(image.scale)
+            let size = CGSize(width: natural.width * scale / self.scale,
+                              height: natural.height * scale / self.scale)
+
+            // Leading edge, vertically centred: the artwork is an icon sitting
+            // to the left of the label, which reserves room with its padding.
+            child.frame = CGRect(
+                x: CGFloat(image.offset.x),
+                y: (layer.bounds.height - size.height) / 2 + CGFloat(image.offset.y),
+                width: size.width,
+                height: size.height
+            )
+        } else {
+            let key = ObjectIdentifier(layer)
+            imageLayers[key]?.removeFromSuperlayer()
+            imageLayers.removeValue(forKey: key)
         }
 
         if let shadow = style.shadow {
@@ -247,6 +269,17 @@ final class BarLayerTree {
         } else if layer.shadowOpacity != 0 {
             layer.shadowOpacity = 0
         }
+    }
+
+    private func imageChild(of parent: CALayer) -> CALayer {
+        let key = ObjectIdentifier(parent)
+        if let existing = imageLayers[key] { return existing }
+        let child = CALayer()
+        child.contentsScale = scale
+        child.actions = ["contents": NSNull(), "position": NSNull(), "bounds": NSNull()]
+        parent.addSublayer(child)
+        imageLayers[key] = child
+        return child
     }
 
     private func loadImage(_ path: String) -> CGImage? {

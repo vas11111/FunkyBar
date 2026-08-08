@@ -498,7 +498,8 @@ let exampleConfigTests = Suite("Example config") { s in
 
         // The three coin pills are expanded at load; workspaces at runtime.
         let coins = try t.require(group(outcome, "meters_pill"))
-        t.expectEqual(coins.items.map(\.repeatValue), ["c", "b", "a"])
+        // Declaration order is visual order, so this is left-to-right on screen.
+        t.expectEqual(coins.items.map(\.repeatValue), ["a", "b", "c"])
 
         let workspaces = try t.require(group(outcome, "workspaces_pill"))
         t.expectEqual(workspaces.items.count, 1, "a dynamic repeat stays one template")

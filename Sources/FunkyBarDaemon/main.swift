@@ -33,6 +33,7 @@ if arguments.contains("--help") || arguments.contains("-h") {
       --check             validate the config and exit
       --duration SECONDS  run for a fixed time, then exit (for testing)
       --selftest          start, verify the window is really on screen, exit
+      --dump              print what every item will draw, then exit
       --version
     """)
     exit(0)
@@ -77,12 +78,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let configPath: String
     let duration: Double?
     let selfTest: Bool
+    let dump: Bool
 
-    init(runtime: BarRuntime, configPath: String, duration: Double?, selfTest: Bool) {
+    init(runtime: BarRuntime, configPath: String, duration: Double?, selfTest: Bool, dump: Bool) {
         self.runtime = runtime
         self.configPath = configPath
         self.duration = duration
         self.selfTest = selfTest
+        self.dump = dump
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -94,6 +97,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         FileHandle.standardError.write(Data("funkybar started\n\(runtime.status)\n".utf8))
+
+        if dump {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                MainActor.assumeIsolated {
+                    print(self.runtime.dump)
+                    self.runtime.stop()
+                    exit(0)
+                }
+            }
+            return
+        }
 
         if selfTest {
             // Give providers one turn to report and the server one turn to
@@ -125,7 +139,8 @@ let delegate = AppDelegate(
     runtime: runtime,
     configPath: configPath,
     duration: value(after: "--duration").flatMap(Double.init),
-    selfTest: arguments.contains("--selftest")
+    selfTest: arguments.contains("--selftest"),
+    dump: arguments.contains("--dump")
 )
 app.delegate = delegate
 app.run()
