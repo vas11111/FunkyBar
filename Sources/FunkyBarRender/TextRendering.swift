@@ -55,11 +55,22 @@ public enum FontResolver {
 /// A shaped line plus the metrics needed to place it.
 public struct ShapedText {
     public let line: CTLine
+    /// Layout width, matching sketchybar: ink bounds, then floor(w + 1.5).
     public let width: CGFloat
+    /// Layout height, same rule.
+    public let height: CGFloat
+    /// Typographic metrics, used for the baseline.
     public let ascent: CGFloat
     public let descent: CGFloat
 
-    public var height: CGFloat { ascent + descent }
+    /// Distance from the bottom of a `height`-tall box to the text baseline.
+    ///
+    /// sketchybar places the baseline at `centreY - (ascent - descent) / 2`.
+    /// Given a box centred on `centreY`, that is this far above its bottom
+    /// edge. Deriving it keeps the two implementations agreeing even though
+    /// the box height comes from ink bounds and the baseline from typographic
+    /// metrics.
+    public var baselineOffset: CGFloat { (height - ascent + descent) / 2 }
 }
 
 /// Shapes and measures text with CoreText.
@@ -76,9 +87,26 @@ public struct CoreTextShaper: Sendable {
         var ascent: CGFloat = 0
         var descent: CGFloat = 0
         var leading: CGFloat = 0
-        let width = CTLineGetTypographicBounds(line, &ascent, &descent, &leading)
+        CTLineGetTypographicBounds(line, &ascent, &descent, &leading)
 
-        return ShapedText(line: line, width: CGFloat(width), ascent: ascent, descent: descent)
+        // Match sketchybar exactly (src/text.c, text_prepare_line):
+        //
+        //   bounds = CTLineGetBoundsWithOptions(line, kCTLineBoundsUseGlyphPathBounds)
+        //   width  = (uint32_t)(bounds.size.width + 1.5)
+        //
+        // Ink bounds, not the typographic advance. For a digit in
+        // JetBrainsMono Bold 14 the advance is 8.4 but the ink is narrower, and
+        // the difference compounds across a row of items. The cast to uint32_t
+        // truncates, so `+ 1.5` then floor is the same operation.
+        let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+
+        return ShapedText(
+            line: line,
+            width: (ink.width + 1.5).rounded(.down),
+            height: (ink.height + 1.5).rounded(.down),
+            ascent: ascent,
+            descent: descent
+        )
     }
 }
 
@@ -93,8 +121,7 @@ public struct CoreTextMeasurer: TextMeasuring {
 
     public func size(of text: String, font: FontSpec) -> CGSize {
         guard let shaped = shaper.shape(text, font: font) else { return .zero }
-        // Round up so a fractional advance never clips the final glyph.
-        return CGSize(width: shaped.width.rounded(.up), height: shaped.height.rounded(.up))
+        return CGSize(width: shaped.width, height: shaped.height)
     }
 }
 
@@ -140,9 +167,7 @@ final class TextLayer: CALayer {
         ctx.textMatrix = .identity
         ctx.setFillColor(color)
 
-        // The layer's height is ascent + descent, so the baseline sits exactly
-        // `descent` above the bottom edge.
-        ctx.textPosition = CGPoint(x: 0, y: shaped.descent)
+        ctx.textPosition = CGPoint(x: 0, y: shaped.baselineOffset)
 
         for run in CTLineGetGlyphRuns(shaped.line) as! [CTRun] {
             let attributes = CTRunGetAttributes(run) as NSDictionary
@@ -157,7 +182,7 @@ final class TextLayer: CALayer {
             // Draw glyphs directly rather than via CTLineDraw so the fill
             // colour set above wins over any colour baked into the run.
             for index in 0 ..< count {
-                positions[index].y += shaped.descent
+                positions[index].y += shaped.baselineOffset
             }
             CTFontDrawGlyphs(font, glyphs, positions, count, ctx)
         }

@@ -232,6 +232,11 @@ margin   = { left = 3, right = 6 }
 id       = "meters_pill"
 position = "right"
 style    = "$pill"
+# sketchybarrc widens the outer gap on the end coins with
+# `meter_a padding_left=6` and `meter_c padding_right=6`. Group
+# padding says the same thing once instead of twice, and survives the coin
+# list changing.
+padding  = { left = 3, right = 3 }
 
   [[group.item]]
   id       = "meter"

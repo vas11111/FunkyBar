@@ -192,13 +192,14 @@ let layoutGroupTests = Suite("Layout groups") { s in
         t.expectEqual(try t.require(result.item("a")).frame.minX, 7)
     }
 
-    s.test("child margins separate siblings but not the group's edges") { t in
-        // The sketchybarrc this replaces carries a comment that brackets
-        // swallow their members' outer margins. That is the correct behaviour,
-        // not a wart: a child's margin exists to separate it from siblings, so
-        // at the group's edges there is no sibling and no space is owed.
-        // Counting them padded the inside of the pill with space belonging
-        // outside it, which made every group 6pt wider than sketchybar's.
+    s.test("a group's box includes its children's outer margins") { t in
+        // Measured from sketchybar's own item windows, which are readable from
+        // the window server: the workspaces bracket sits at x=10 w=195 with its
+        // first child at x=13 and the last ending at 202. The bracket extends
+        // 3pt past the children on each side, which is exactly the children's
+        // margin. An earlier version of this test asserted the opposite, on a
+        // misreading of the sketchybarrc comment about brackets swallowing
+        // member margins.
         var a = makeItem("a", label: "AA")          // 10 wide
         a.margin = Insets(leading: 4, trailing: 4)
         var b = makeItem("b", label: "BB")          // 10 wide
@@ -212,22 +213,36 @@ let layoutGroupTests = Suite("Layout groups") { s in
         let frameB = try t.require(result.item("b"))
 
         t.expectEqual(groupFrame.frame.minX, 10, "the group's own margin positions it")
-        // 10 + (4 trailing + 4 leading) + 10 = 28. The outer 4s are excluded.
-        t.expectEqual(groupFrame.frame.width, 28, "edge margins must stay outside the group")
-        t.expectEqual(frameA.frame.minX, 10, "the first child is flush with the group's edge")
-        t.expectEqual(frameB.frame.maxX, groupFrame.frame.maxX, "so is the last")
+        t.expectEqual(groupFrame.frame.width, 36, "4 + 10 + 4 twice")
+        t.expectEqual(frameA.frame.minX - groupFrame.frame.minX, 4, "child margin inset at the leading edge")
+        t.expectEqual(groupFrame.frame.maxX - frameB.frame.maxX, 4, "and at the trailing edge")
         t.expectEqual(frameB.frame.minX - frameA.frame.maxX, 8, "interior gap is 4 + 4")
     }
 
-    s.test("a single child sits flush inside its group") { t in
-        var only = makeItem("a", label: "AA")
+    s.test("a lone child is still inset by its own margin") { t in
+        var only = makeItem("a", label: "AA")       // 10 wide
         only.margin = Insets(leading: 7, trailing: 7)
 
         let group = ResolvedGroup(id: "pill", items: [only])
         let result = layout([.group(group)], bar: bar(padding: .zero))
 
-        t.expectEqual(try t.require(result.group("pill")).frame.width, 10,
-                      "with no siblings, no margin applies at all")
+        t.expectEqual(try t.require(result.group("pill")).frame.width, 24, "7 + 10 + 7")
+        t.expectEqual(try t.require(result.item("a")).frame.minX, 7)
+    }
+
+    s.test("group padding stacks on top of child margins") { t in
+        // How the coin pill reproduces sketchybar's `meter_a
+        // padding_left=6` without per-clone overrides: group padding 3 plus the
+        // inherited child margin 3 gives the same 6pt inset.
+        var only = makeItem("a", label: "AA")
+        only.margin = Insets(leading: 3, trailing: 3)
+
+        let group = ResolvedGroup(id: "pill", padding: Insets(leading: 3, trailing: 3), items: [only])
+        let result = layout([.group(group)], bar: bar(padding: .zero))
+
+        let groupFrame = try t.require(result.group("pill"))
+        t.expectEqual(groupFrame.frame.width, 22, "3 + 3 + 10 + 3 + 3")
+        t.expectEqual(try t.require(result.item("a")).frame.minX - groupFrame.frame.minX, 6)
     }
 
     s.test("a group reports its children in order") { t in

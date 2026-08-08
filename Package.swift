@@ -13,6 +13,7 @@ let package = Package(
         .executable(name: "funkybar", targets: ["funkybar"]),
         .executable(name: "funkybard", targets: ["FunkyBarDaemon"]),
         .executable(name: "funkybar-test", targets: ["FunkyBarTests"]),
+        .executable(name: "funkybar-measure", targets: ["funkybar-measure"]),
         .library(name: "FunkyBarCore", targets: ["FunkyBarCore"]),
     ],
     targets: [
@@ -36,6 +37,9 @@ let package = Package(
 
         // The thin CLI client.
         .executableTarget(name: "funkybar", dependencies: ["FunkyBarCore", "FunkyBarIPC"]),
+
+        // Compares on-screen geometry against sketchybar's, item by item.
+        .executableTarget(name: "funkybar-measure"),
 
         // Test harness and the suites that use it.
         .target(name: "TestKit"),

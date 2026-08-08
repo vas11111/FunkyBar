@@ -251,8 +251,16 @@ public final class BarController {
     public var displayCount: Int { displays.count }
 
     /// The most recent layout for the main display, for diagnostics.
+    ///
+    /// Explicitly the main display: right-anchored items sit at
+    /// `width - padding - content`, so reporting an arbitrary display would
+    /// make every right-side coordinate incomparable with anything measured on
+    /// another one.
     public var currentLayout: BarLayout? {
-        displays.values.first?.lastLayout
+        if let mainID = NSScreen.main?.displayID, let display = displays[mainID] {
+            return display.lastLayout
+        }
+        return displays.values.first?.lastLayout
     }
 }
 

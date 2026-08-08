@@ -193,18 +193,14 @@ public enum LayoutEngine {
         case .group(let group):
             let children = group.visibleItems.map { measure($0, measuring: measuring) }
 
-            // A child's margin separates it from its *siblings*, so it applies
-            // between children but not at the group's own edges. Counting the
-            // first child's leading margin and the last child's trailing margin
-            // would pad the inside of the pill with space that belongs outside
-            // it, which is what "brackets swallow their members' outer margins"
-            // describes in the sketchybarrc this replaces.
+            // A group's box includes its children's outer margins. Measured
+            // from sketchybar's own item windows: the workspaces bracket sits
+            // at x=10 w=195 with its first child at x=13 and the last ending at
+            // 202, so the bracket extends 3pt past the children on each side.
+            // An earlier version excluded those, on a misreading of the comment
+            // in the sketchybarrc about brackets swallowing member margins.
             let spacing = group.spacing * Double(max(0, children.count - 1))
-            var childrenWidth = children.reduce(0) { $0 + $1.width } + spacing
-            for (index, child) in children.enumerated() {
-                if index > 0 { childrenWidth += child.margin.leading }
-                if index < children.count - 1 { childrenWidth += child.margin.trailing }
-            }
+            let childrenWidth = children.reduce(0) { $0 + $1.outerWidth } + spacing
 
             let childrenHeight = children.map(\.height).max() ?? 0
             return Measured(
@@ -267,20 +263,14 @@ public enum LayoutEngine {
 
             var cursor = originX + group.padding.leading
             var childIDs: [String] = []
-            let children = group.visibleItems
 
-            for (index, pair) in zip(children, measured.children).enumerated() {
-                let (child, childSize) = pair
-                // Mirrors the measurement above: edge margins are not interior.
-                if index > 0 { cursor += childSize.margin.leading }
+            for (child, childSize) in zip(group.visibleItems, measured.children) {
+                cursor += childSize.margin.leading
                 items.append(
                     placeItem(child, measured: childSize, originX: cursor, bar: bar, measuring: measuring)
                 )
                 childIDs.append(child.id)
-                cursor += childSize.width
-                if index < children.count - 1 {
-                    cursor += childSize.margin.trailing + group.spacing
-                }
+                cursor += childSize.width + childSize.margin.trailing + group.spacing
             }
 
             groups.append(

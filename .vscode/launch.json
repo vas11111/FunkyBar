@@ -1,0 +1,84 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:funkybar}",
+            "name": "Debug funkybar",
+            "target": "funkybar",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug funkybar"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:funkybar}",
+            "name": "Release funkybar",
+            "target": "funkybar",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release funkybar"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:funkybar}",
+            "name": "Debug funkybard",
+            "target": "funkybard",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug funkybard"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:funkybar}",
+            "name": "Release funkybard",
+            "target": "funkybard",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release funkybard"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:funkybar}",
+            "name": "Debug funkybar-test",
+            "target": "funkybar-test",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug funkybar-test"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:funkybar}",
+            "name": "Release funkybar-test",
+            "target": "funkybar-test",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release funkybar-test"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:funkybar}",
+            "name": "Debug funkybar-measure",
+            "target": "funkybar-measure",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug funkybar-measure"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:funkybar}",
+            "name": "Release funkybar-measure",
+            "target": "funkybar-measure",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release funkybar-measure"
+        }
+    ]
+}
