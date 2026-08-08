@@ -5,7 +5,16 @@ macOS 26 and later: the same capabilities, one tenth the moving parts,
 measurably cheaper on battery and memory, and an architecture in which most of
 upstream's open bug list cannot occur.
 
-Status: **planning**. No code yet. See [PLAN.md](PLAN.md).
+Status: **M1 runs.** The bar draws on every display from native providers, with
+no shell plugins. See [docs/STATUS.md](docs/STATUS.md) for what works, what was
+measured, and what is not built yet.
+
+```sh
+swift build -c release
+.build/release/funkybard --check      # validate a config, no display needed
+.build/release/funkybard --selftest   # prove the bar is on screen, then exit
+swift run funkybar-test               # 147 tests
+```
 
 ---
 
@@ -32,10 +41,14 @@ protocol. None of it requires disabling SIP.
 
 ## Documents
 
+- [docs/STATUS.md](docs/STATUS.md) - what runs today, measured numbers, what is
+  still missing, and the decisions waiting on you
 - [PLAN.md](PLAN.md) - architecture, provider system, config format, efficiency
   budget, milestones, risks
 - [docs/ISSUE-TRIAGE.md](docs/ISSUE-TRIAGE.md) - all 57 open upstream issues,
   each mapped to a disposition
+- [funkybar.toml.example](funkybar.toml.example) - a full port of the current
+  sketchybarrc, decoded end-to-end by the test suite
 - [CONTRIBUTING.md](CONTRIBUTING.md) - commit convention and branching
 
 ## Requirements
