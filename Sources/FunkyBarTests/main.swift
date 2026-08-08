@@ -6,6 +6,7 @@ import TestKit
 let allSuites: [Suite] =
     tomlSuites
     + configSuites
+    + layoutSuites
 
 let filter = CommandLine.arguments.dropFirst().first
 exit(TestRunner.run(allSuites, filter: filter))
