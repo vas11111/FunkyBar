@@ -1,0 +1,15 @@
+
+# <type>(<scope>): <subject>            <-- 72 chars max, imperative, no period
+#
+# <body>                                 <-- what and why, not how. wrap at 72.
+#
+# <footer>                               <-- BREAKING CHANGE:, Refs, Closes
+#
+# ----------------------------------------------------------------------------
+# types    feat  fix  perf  refactor  docs  test  build  ci  style  chore  revert
+# scopes   core  render  providers  ipc  cli  daemon  skylight  config  docs  deps
+#
+# perf commits carry a before/after number in the body.
+# breaking changes take a ! after the scope and a BREAKING CHANGE: footer.
+#
+# See CONTRIBUTING.md.

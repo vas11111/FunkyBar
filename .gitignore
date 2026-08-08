@@ -1,0 +1,24 @@
+# SwiftPM
+.build/
+.swiftpm/
+Package.resolved
+*.xcodeproj
+*.xcworkspace
+
+# Xcode / DerivedData
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Build output
+bin/
+dist/
+*.dSYM/
+
+# macOS
+.DS_Store
+
+# Local overrides and scratch
+*.local
+/scratch/
+/.env

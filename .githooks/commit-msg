@@ -1,0 +1,54 @@
+#!/bin/sh
+# Enforce Conventional Commits. See CONTRIBUTING.md for the full convention.
+#
+# Accepts:   type(scope)!: subject
+#            type!: subject
+#            type: subject
+# Ignores:   comment lines, merge commits, fixup!/squash! commits.
+
+msg_file="$1"
+
+# First non-comment, non-empty line.
+subject=$(grep -v '^#' "$msg_file" | sed '/^[[:space:]]*$/d' | head -n 1)
+
+[ -z "$subject" ] && exit 0
+
+case "$subject" in
+    "Merge "*|"Revert \""*|fixup!*|squash!*) exit 0 ;;
+esac
+
+types='feat|fix|perf|refactor|docs|test|build|ci|style|chore|revert'
+scopes='core|render|providers|ipc|cli|daemon|skylight|config|docs|deps'
+
+if ! printf '%s' "$subject" | grep -Eq "^($types)(\(($scopes)\))?!?: .+"; then
+    cat >&2 <<EOF
+
+commit rejected: subject does not match the Conventional Commits format.
+
+  got:      $subject
+  expected: <type>(<scope>): <subject>
+
+  types:    $(printf '%s' "$types" | tr '|' ' ')
+  scopes:   $(printf '%s' "$scopes" | tr '|' ' ')   (optional)
+
+  example:  perf(providers): replace lsof shell-out with proc_pidinfo
+
+See CONTRIBUTING.md.
+
+EOF
+    exit 1
+fi
+
+if [ "${#subject}" -gt 72 ]; then
+    printf '\ncommit rejected: subject is %s chars, limit is 72.\n\n  %s\n\n' \
+        "${#subject}" "$subject" >&2
+    exit 1
+fi
+
+case "$subject" in
+    *.) printf '\ncommit rejected: subject must not end with a period.\n\n  %s\n\n' \
+            "$subject" >&2
+        exit 1 ;;
+esac
+
+exit 0
