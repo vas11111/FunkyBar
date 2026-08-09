@@ -47,6 +47,7 @@ requirement. A `perf` commit body should carry a before and after number.
 | `skylight` | The isolated private-API target |
 | `config` | The TOML schema and its parser |
 | `docs` | Plan, reference, migration guides |
+| `tools` | Developer tooling: funkybar-measure, funkybar-diff |
 | `deps` | Dependency changes |
 
 Scope is optional but preferred. Omit it only for changes that genuinely span

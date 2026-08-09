@@ -14,6 +14,7 @@ let package = Package(
         .executable(name: "funkybard", targets: ["FunkyBarDaemon"]),
         .executable(name: "funkybar-test", targets: ["FunkyBarTests"]),
         .executable(name: "funkybar-measure", targets: ["funkybar-measure"]),
+        .executable(name: "funkybar-diff", targets: ["funkybar-diff"]),
         .library(name: "FunkyBarCore", targets: ["FunkyBarCore"]),
     ],
     targets: [
@@ -40,6 +41,9 @@ let package = Package(
 
         // Compares on-screen geometry against sketchybar's, item by item.
         .executableTarget(name: "funkybar-measure"),
+
+        // Pixel diff of two bars inside one screenshot.
+        .executableTarget(name: "funkybar-diff"),
 
         // Test harness and the suites that use it.
         .target(name: "TestKit"),

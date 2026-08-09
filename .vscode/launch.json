@@ -79,6 +79,26 @@
             "target": "funkybar-measure",
             "configuration": "release",
             "preLaunchTask": "swift: Build Release funkybar-measure"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:funkybar}",
+            "name": "Debug funkybar-diff",
+            "target": "funkybar-diff",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug funkybar-diff"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:funkybar}",
+            "name": "Release funkybar-diff",
+            "target": "funkybar-diff",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release funkybar-diff"
         }
     ]
 }

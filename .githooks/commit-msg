@@ -18,7 +18,7 @@ case "$subject" in
 esac
 
 types='feat|fix|perf|refactor|docs|test|build|ci|style|chore|revert'
-scopes='core|render|providers|ipc|cli|daemon|skylight|config|docs|deps'
+scopes='core|render|providers|ipc|cli|daemon|skylight|config|docs|deps|tools'
 
 if ! printf '%s' "$subject" | grep -Eq "^($types)(\(($scopes)\))?!?: .+"; then
     cat >&2 <<EOF
