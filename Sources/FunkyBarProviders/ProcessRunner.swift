@@ -131,8 +131,12 @@ public struct ProcessRunner: Sendable {
         var timedOut = false
         if group.wait(timeout: .now() + timeout) == .timedOut {
             timedOut = true
+            // Group-wide, for the same reason as StreamingProcess: the shell
+            // may have forked the real work as a grandchild.
+            kill(-pid, SIGTERM)
             kill(pid, SIGTERM)
             if group.wait(timeout: .now() + 1) == .timedOut {
+                kill(-pid, SIGKILL)
                 kill(pid, SIGKILL)
                 _ = group.wait(timeout: .now() + 1)
             }

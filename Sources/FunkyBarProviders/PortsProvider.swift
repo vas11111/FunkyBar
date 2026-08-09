@@ -117,7 +117,8 @@ public final class PortsProvider: Provider {
             guard let pid = Int32(target) else { return }
             command = "kill \(pid) 2>/dev/null; sleep 2; kill -9 \(pid) 2>/dev/null; true"
         case "name":
-            command = "pkill -x '\(target)' 2>/dev/null; sleep 2; pkill -9 -x '\(target)' 2>/dev/null; true"
+            let quoted = target.shellQuoted
+            command = "pkill -x \(quoted) 2>/dev/null; sleep 2; pkill -9 -x \(quoted) 2>/dev/null; true"
         default:
             return
         }

@@ -116,7 +116,12 @@ public enum ItemResolver {
         // where the values are still in scope.
         if var image = out.style.image {
             let rendered = image.path.render(values)
-            image.resolvedPath = (rendered as NSString).expandingTildeInPath
+            // A template can interpolate a provider value, and those are not
+            // all trustworthy: a workspace named `../../../secret` would
+            // otherwise point the bar at an arbitrary file.
+            image.resolvedPath = rendered.containsUpwardTraversal
+                ? nil
+                : (rendered as NSString).expandingTildeInPath
             out.style.image = image
         }
 

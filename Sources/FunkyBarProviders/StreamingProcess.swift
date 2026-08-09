@@ -43,7 +43,14 @@ public final class StreamingProcess: @unchecked Sendable {
         readFD = -1
         lock.unlock()
 
-        if child > 0 { kill(child, SIGTERM) }
+        // Signal the process GROUP, not just the shell. `sh -c "aerospace
+        // subscribe"` forks the real command as a grandchild, so SIGTERM to sh
+        // alone leaves it running with ppid 1. POSIX_SPAWN_SETSID makes the
+        // child a group leader, so pgid == pid and -pid reaches all of it.
+        if child > 0 {
+            kill(-child, SIGTERM)
+            kill(child, SIGTERM)
+        }
         if fd >= 0 { close(fd) }
     }
 
@@ -92,6 +99,7 @@ public final class StreamingProcess: @unchecked Sendable {
         lock.unlock()
 
         if shouldStop {
+            kill(-child, SIGTERM)
             kill(child, SIGTERM)
             close(fds[0])
             return

@@ -258,7 +258,7 @@ final class BarRuntime {
             let values = inputs.values[event.itemID] ?? [:]
             let workspace = template.render(values)
             guard !workspace.isEmpty else { return }
-            ProcessRunner(timeout: 3).run("aerospace workspace \(workspace)") { _ in }
+            ProcessRunner(timeout: 3).run("aerospace workspace \(workspace.shellQuoted)") { _ in }
 
         case .provider(let name, let command):
             providers[name]?.handle(command: command)
