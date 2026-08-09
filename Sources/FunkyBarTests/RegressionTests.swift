@@ -228,7 +228,40 @@ let seedRegressionTests = Suite("Seed file regressions") { s in
 }
 
 let regressionSuites: [Suite] = [
+    providerCommandTests,
     seedRegressionTests,
     glyphRegressionTests,
     renderRegressionTests,
 ]
+
+let providerCommandTests = Suite("Provider commands") { s in
+
+    s.test("the status item binds a toggle command the provider can find") { t in
+        // The click and the action both resolved correctly in the event trace,
+        // so a dead button means the command never reached the provider.
+        let config = try exampleConfig()
+        let status = try t.require(item(config, "status"))
+        let binding = try t.require(status.provider, "status has no provider")
+
+        guard case .table(let commands)? = binding.options["commands"]?.value else {
+            t.fail("provider options have no [commands] table; keys: \(binding.options.keys)")
+            return
+        }
+        t.expect(commands["toggle"] != nil, "no toggle command; have \(commands.keys)")
+        t.expect(commands["settings"] != nil, "no settings command; have \(commands.keys)")
+
+        guard case .string(let toggle)? = commands["toggle"]?.value else {
+            t.fail("toggle is not a string")
+            return
+        }
+        // StatusApp.app watches this file; the --toggle flag it does not use.
+        t.expectContains(toggle, "status-command")
+        t.expect(!toggle.contains("--toggle"), "should not call the flag the app ignores")
+    }
+
+    s.test("the left click resolves to that provider command") { t in
+        let status = try t.require(item(try exampleConfig(), "status"))
+        t.expectEqual(status.actions[.left], .provider(name: "status", command: "toggle"))
+        t.expectEqual(status.actions[.right], .provider(name: "status", command: "settings"))
+    }
+}

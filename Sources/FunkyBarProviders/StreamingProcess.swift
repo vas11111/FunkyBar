@@ -159,11 +159,13 @@ public final class StreamingProcess: @unchecked Sendable {
     }
 }
 
-/// Watches one file and reports every change.
+/// Watches a file and reports every change.
 ///
-/// Used to pick up state that another app writes. StatusApp.app and ExampleApp.app
-/// already maintain their own state files, so watching those gives instant
-/// updates with no change to either app and no socket protocol.
+/// Watches the *containing directory*, not the file. Apps that write state
+/// atomically (temp file, delete, rename, which is what StatusApp.app does) destroy
+/// the inode on every write, so a watch bound to the file itself dies after
+/// the first change and any recovery races the gap where the file does not
+/// exist. A directory watch has no such gap.
 public final class FileWatcher: @unchecked Sendable {
     private let path: String
     private let onChange: @MainActor () -> Void
@@ -180,31 +182,24 @@ public final class FileWatcher: @unchecked Sendable {
     }
 
     private func watch() {
-        // O_EVTONLY follows the file, not the name. An app that writes via a
-        // temporary file and rename replaces the inode, so the watch has to be
-        // re-established after each such event.
-        let descriptor = open(path, O_EVTONLY)
+        let directory = (path as NSString).deletingLastPathComponent
+        let descriptor = open(directory, O_EVTONLY)
         guard descriptor >= 0 else {
-            // The file may not exist yet; look again shortly.
             queue.asyncAfter(deadline: .now() + 2) { [weak self] in self?.watch() }
             return
         }
 
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: descriptor,
-            eventMask: [.write, .extend, .rename, .delete, .link],
+            eventMask: [.write, .extend, .link, .rename, .delete],
             queue: queue
         )
         source.setEventHandler { [weak self] in
             guard let self else { return }
-            let data = source.data
             let handler = self.onChange
+            // A directory event says something in it changed, not what. The
+            // reader re-reads and compares, so a spurious wake is harmless.
             DispatchQueue.main.async { MainActor.assumeIsolated { handler() } }
-
-            if data.contains(.rename) || data.contains(.delete) {
-                source.cancel()
-                self.queue.asyncAfter(deadline: .now() + 0.05) { [weak self] in self?.watch() }
-            }
         }
         source.setCancelHandler { close(descriptor) }
         source.resume()

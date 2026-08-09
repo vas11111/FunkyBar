@@ -170,7 +170,7 @@ public final class PushProvider: Provider {
     public static let kind = "push"
 
     public let itemID: String
-    public let policy: UpdatePolicy = .event
+    public let policy: UpdatePolicy
     public let channel: String
 
     private let seedFile: String?
@@ -187,6 +187,8 @@ public final class PushProvider: Provider {
 
     public init(_ context: ProviderContext) {
         itemID = context.itemID
+        // Event-driven, with a slow floor so a missed write self-corrects.
+        policy = .interval(seconds: context.interval ?? 10)
         channel = context.string("channel") ?? context.itemID
         seedFile = context.string("seed_file").map { ($0 as NSString).expandingTildeInPath }
         seedSeparator = context.string("seed_separator")
@@ -208,9 +210,31 @@ public final class PushProvider: Provider {
     /// it is what makes `on_click = "status:toggle"` do something rather than
     /// silently resolve to nothing.
     public func handle(command: String) {
-        guard let line = commands[command] else { return }
-        runner.run(line) { _ in }
+        guard let line = commands[command] else {
+            if PushProvider.trace {
+                let available = commands.keys.sorted().joined(separator: ", ")
+                FileHandle.standardError.write(Data(
+                    "command: '\(command)' not bound on '\(itemID)' (have: \(available))\n".utf8))
+            }
+            return
+        }
+
+        runner.run(line) { result in
+            guard PushProvider.trace else { return }
+            let report: String
+            switch result {
+            case .success(let output):
+                report = "command: '\(command)' exit=\(output.status)"
+                    + (output.timedOut ? " TIMED OUT" : "")
+                    + (output.standardError.isEmpty ? "" : " stderr=\(output.standardError.prefix(200))")
+            case .failure(let error):
+                report = "command: '\(command)' failed to spawn: \(error)"
+            }
+            FileHandle.standardError.write(Data((report + "\n").utf8))
+        }
     }
+
+    nonisolated static let trace = ProcessInfo.processInfo.environment["FUNKYBAR_DEBUG_EVENTS"] == "1"
 
     public func start(emit: @escaping @MainActor (ProviderUpdate) -> Void) {
         self.emit = emit
@@ -281,6 +305,9 @@ public final class PushProvider: Provider {
     }
 
     public func refresh() -> ProviderUpdate? {
-        ProviderUpdate(itemID: itemID, values: values, expansion: nil, perItem: perItem)
+        // Re-read on every tick: this is the safety net for a write whose
+        // event never arrived.
+        seed()
+        return ProviderUpdate(itemID: itemID, values: values, expansion: nil, perItem: perItem)
     }
 }
