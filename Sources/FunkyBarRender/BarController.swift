@@ -34,7 +34,15 @@ final class BarDisplay {
         panel.contentView = view
 
         tree = BarLayerTree(root: view.layer!)
-        tree.setContentsScale(screen.backingScaleFactor)
+        tree.setContentsScale(BarDisplay.renderScale(for: screen))
+    }
+
+    /// sketchybar calls SLSSetWindowResolution(window, 2.0) on every window
+    /// regardless of the display it lands on, so its text is supersampled on a
+    /// non-retina monitor. Following backingScaleFactor instead renders at 1x
+    /// there, which reads as thinner and smaller beside it.
+    static func renderScale(for screen: NSScreen) -> CGFloat {
+        max(2, screen.backingScaleFactor)
     }
 
     static func frame(for screen: NSScreen, config: BarConfig) -> CGRect {
@@ -65,7 +73,7 @@ final class BarDisplay {
             view.frame = CGRect(origin: .zero, size: frame.size)
         }
         panel.apply(config)
-        tree.setContentsScale(screen.backingScaleFactor)
+        tree.setContentsScale(BarDisplay.renderScale(for: screen))
     }
 
     func update(screen: NSScreen) {
@@ -231,7 +239,7 @@ public final class BarController {
             anchor: anchor,
             screen: display.screen,
             barConfig: self.config,
-            contentsScale: display.screen.backingScaleFactor
+            contentsScale: BarDisplay.renderScale(for: display.screen)
         )
     }
 

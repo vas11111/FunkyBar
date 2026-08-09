@@ -206,12 +206,29 @@ margin   = { left = 3, right = 6 }
   channel   = "status"
   seed_file = "~/.local/state/status-state"
 
-  # Until the socket layer lands, a click drives the app directly. StatusApp.app
-  # parses these before NSApplication starts, so neither spawns a second
-  # instance. See INTEGRATION.md in the sketchybar config.
+  # StatusApp.app does not toggle via a flag: it watches ~/.local/state/status-command.
+  # This mirrors vpn_click.sh, including its wedge recovery, since a toggle
+  # that silently does nothing is worse than no button.
   [item.provider.commands]
-  toggle   = "/Applications/StatusApp.app/Contents/MacOS/STATUS --toggle"
   settings = "/Applications/StatusApp.app/Contents/MacOS/STATUS --settings"
+  toggle = """
+    if ! pgrep -f 'StatusApp.app/Contents/MacOS/STATUS' >/dev/null 2>&1; then
+      open /Applications/StatusApp.app; exit 0
+    fi
+    before=$(cat ~/.local/state/status-state 2>/dev/null || echo OFF)
+    mkdir -p ~/.local/state
+    echo toggle > ~/.local/state/status-command
+    for _ in 1 2 3 4 5 6; do
+      sleep 0.5
+      [ "$(cat ~/.local/state/status-state 2>/dev/null)" != "$before" ] && exit 0
+    done
+    killall -9 STATUS 2>/dev/null
+    networksetup -setsocksfirewallproxystate Wi-Fi off 2>/dev/null
+    echo OFF > ~/.local/state/status-state
+    rm -f ~/.local/state/status-command
+    sleep 1
+    open /Applications/StatusApp.app
+    """
 
   [item.on_click]
   left  = "status:toggle"
