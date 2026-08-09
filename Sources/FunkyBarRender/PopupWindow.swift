@@ -90,8 +90,19 @@ final class PopupWindow {
         let iconColumn = iconWidths.max() ?? 0
         let labelColumn = labelWidths.max() ?? 0
 
-        let contentWidth = iconPadding.horizontal + iconColumn
-            + labelPadding.horizontal + labelColumn
+        // Columns line the labels up, which suits a port list; compact puts
+        // each label straight after its icon, as sketchybar's rows do and at a
+        // noticeably narrower popup.
+        let useColumns = spec.rowAlignment == .columns
+        let contentWidth: CGFloat
+        if useColumns {
+            contentWidth = iconPadding.horizontal + iconColumn
+                + labelPadding.horizontal + labelColumn
+        } else {
+            contentWidth = zip(iconWidths, labelWidths)
+                .map { iconPadding.horizontal + $0 + labelPadding.horizontal + $1 }
+                .max() ?? 0
+        }
         let width = contentWidth + insets.horizontal
         let height = CGFloat(newRows.count) * rowHeight + insets.vertical
 
@@ -104,7 +115,9 @@ final class PopupWindow {
             let iconWidth = iconWidths[index]
             let labelWidth = labelWidths[index]
             let iconX = frame.minX + iconPadding.leading
-            let labelX = frame.minX + iconPadding.horizontal + iconColumn + labelPadding.leading
+            let labelX = useColumns
+                ? frame.minX + iconPadding.horizontal + iconColumn + labelPadding.leading
+                : iconX + iconWidth + iconPadding.trailing + labelPadding.leading
 
             laid.append(RowLayout(
                 row: row,

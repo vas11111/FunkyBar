@@ -175,6 +175,9 @@ icon     = "󰒍"
   [item.popup]
   on      = "click"
   dismiss = ["mouse_exit", "click_outside"]
+  # "columns" lines the labels up so ports and process names align.
+  # "compact" puts each label straight after its icon, as sketchybar does.
+  rows    = "columns"
 
     # The sketchybarrc sets these as popup.background.*; here the popup has a
     # style like anything else that draws a box.

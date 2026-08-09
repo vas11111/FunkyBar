@@ -176,11 +176,20 @@ public struct PopupSpec: Equatable, Sendable {
         case never
     }
 
+    /// How a row's label sits relative to its icon.
+    public enum RowAlignment: String, Equatable, Sendable, CaseIterable {
+        /// Labels share a column, so ports and process names line up. Wider.
+        case columns
+        /// Label immediately follows its icon, as sketchybar's popup rows do.
+        case compact
+    }
+
     public var trigger: Trigger = .click
     public var dismiss: [PopupDismissal] = [.clickOutside]
     public var axis: Axis = .vertical
     public var style: StyleSpec = StyleSpec()
     public var alignment: Position = .left
+    public var rowAlignment: RowAlignment = .columns
 
     public init() {}
 }

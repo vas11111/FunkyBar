@@ -405,7 +405,7 @@ public enum ConfigDecoder {
     }
 
     private static func decodePopup(_ reader: ConfigReader) -> PopupSpec {
-        reader.warnUnknownKeys(["on", "trigger", "dismiss", "axis", "style", "alignment"])
+        reader.warnUnknownKeys(["on", "trigger", "dismiss", "axis", "style", "alignment", "rows"])
         var popup = PopupSpec()
 
         if let trigger = reader.enumeration("on", as: PopupSpec.Trigger.self) { popup.trigger = trigger }
@@ -415,6 +415,9 @@ public enum ConfigDecoder {
         if let axis = reader.enumeration("axis", as: Axis.self) { popup.axis = axis }
         if let alignment = reader.enumeration("alignment", as: Position.self) { popup.alignment = alignment }
         if let style = reader.child("style") { popup.style = decodeStyle(style, base: popup.style) }
+        if let rows = reader.enumeration("rows", as: PopupSpec.RowAlignment.self) {
+            popup.rowAlignment = rows
+        }
 
         if let raw = reader.strings("dismiss") {
             var dismissals: [PopupDismissal] = []

@@ -227,7 +227,47 @@ let seedRegressionTests = Suite("Seed file regressions") { s in
     }
 }
 
+let popupAlignmentTests = Suite("Popup row alignment") { s in
+
+    s.test("defaults to columns, and the option is honoured") { t in
+        let base = """
+        [[item]]
+        id = "x"
+        [item.popup]
+        on = "click"
+        """
+        var outcome = ConfigDecoder.decode(try TOMLParser.parse(base))
+        t.expectEqual(outcome.config.allItems.first?.popup?.rowAlignment, .columns)
+
+        outcome = ConfigDecoder.decode(try TOMLParser.parse(base + "\nrows = \"compact\"\n"))
+        t.expectEqual(outcome.config.allItems.first?.popup?.rowAlignment, .compact)
+        t.expectEqual(outcome.diagnostics.hasErrors, false)
+    }
+
+    s.test("an unknown alignment is rejected with the options listed") { t in
+        let outcome = ConfigDecoder.decode(try TOMLParser.parse("""
+        [[item]]
+        id = "x"
+        [item.popup]
+        on = "click"
+        rows = "sideways"
+        """))
+        let error = try t.require(outcome.diagnostics.errors.first)
+        t.expectContains(error.message, "not one of the allowed values")
+        t.expectContains(try t.require(error.hint), "compact")
+    }
+
+    s.test("the example config states its choice rather than relying on a default") { t in
+        // The difference from sketchybar's popup is deliberate, so the config
+        // says so out loud; an unexplained difference is indistinguishable
+        // from a bug.
+        let popup = try t.require(item(try exampleConfig(), "ports")?.popup)
+        t.expectEqual(popup.rowAlignment, .columns)
+    }
+}
+
 let regressionSuites: [Suite] = [
+    popupAlignmentTests,
     providerCommandTests,
     seedRegressionTests,
     glyphRegressionTests,
