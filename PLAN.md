@@ -594,8 +594,8 @@ sketchybar on your machine day to day.
 
 **M2 - Providers and popups.** `ports`, `push`, `command`, `volume`, `wifi`,
 `cpu`, `memory`, `network`. Declarative popups with dismissal policies. Your
-config fully migrated, including ports kill actions and the ExampleApp/STATUS push
-integration. `funkybar doctor`.
+config fully migrated, including ports kill actions and push-provider
+integration for external applications. `funkybar doctor`.
 
 **M3 - Parity.** Graphs, sliders, native Spaces, `alias` menu-bar mirroring,
 media with artwork, Core Animation transitions, multi-display edge cases,
