@@ -456,6 +456,18 @@ let tomlRobustnessTests = Suite("TOML robustness") { s in
                          "not a valid value")
     }
 
+    s.test("a multi-line string is rejected as a key") { t in
+        // parseQuotedString handles both forms, so `\"\"\"a\"\"\" = 1` silently
+        // parsed as the key `a`. TOML forbids it.
+        t.expectContains(try firstDiagnostic(t, "\"\"\"a\"\"\" = 1\n").message,
+                         "multi-line string cannot be used as a key")
+    }
+
+    s.test("ordinary quoted keys still parse") { t in
+        let table = try parse("\"a b\" = 1\n'c d' = 2\n")
+        t.expectEqual(table.keys, ["a b", "c d"])
+    }
+
     s.test("a float too large for Int is reported, not trapped") { t in
         // Int(Double) is non-failable and traps; `max_chars = 1e20` aborted.
         let outcome = ConfigDecoder.decode(try TOMLParser.parse("""

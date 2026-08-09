@@ -291,6 +291,16 @@ public struct TOMLParser {
 
             let key: String
             if c == "\"" || c == "'" {
+                // TOML forbids a multi-line string as a key. parseQuotedString
+                // handles both forms, so without this check `"""a""" = 1`
+                // parsed as the key `a` rather than being rejected.
+                if peek(1) == c && peek(2) == c {
+                    throw diagnostic(
+                        "a multi-line string cannot be used as a key",
+                        at: start,
+                        hint: "use a single-quoted or bare key"
+                    )
+                }
                 key = try parseQuotedString().0
             } else if isBareKeyCharacter(c) {
                 var scalar = ""
