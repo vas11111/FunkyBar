@@ -27,6 +27,19 @@ final class BarRuntime {
         configPath = path
         try loadConfig()
         controller.onEvent = { [weak self] event in self?.handle(event) }
+        controller.onPopupAction = { [weak self] itemID, action in
+            self?.providers[itemID]?.handle(command: action)
+            // The popup should reflect the result of what was just clicked, so
+            // refresh the provider rather than wait for its next tick.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                MainActor.assumeIsolated {
+                    guard let self, let provider = self.providers[itemID],
+                          let update = provider.refresh() else { return }
+                    self.ingest(update)
+                    self.rebuild()
+                }
+            }
+        }
         controller.start()
         observePower()
         watchConfig()
@@ -189,6 +202,9 @@ final class BarRuntime {
         if let expansion = update.expansion {
             inputs.repeats[update.itemID] = expansion
         }
+        if let rows = update.rows {
+            controller.setPopupRows(rows, for: update.itemID)
+        }
     }
 
     // MARK: - Drawing
@@ -248,7 +264,7 @@ final class BarRuntime {
             providers[name]?.handle(command: command)
 
         case .togglePopup:
-            break   // popups land in M2
+            controller.togglePopup(for: event.itemID, config: config)
         }
     }
 
@@ -299,6 +315,11 @@ final class BarRuntime {
 
     @discardableResult
     func capture(to path: String) -> Bool { controller.capture(to: path) }
+
+    @discardableResult
+    func capturePopup(_ itemID: String, to path: String) -> Bool {
+        controller.capturePopup(itemID, config: config, to: path)
+    }
 
     /// What each item will actually draw, with provider values folded in.
     ///

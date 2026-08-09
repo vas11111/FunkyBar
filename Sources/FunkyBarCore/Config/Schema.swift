@@ -185,6 +185,36 @@ public struct PopupSpec: Equatable, Sendable {
     public init() {}
 }
 
+/// One line inside a popup.
+///
+/// Rows are produced by a provider rather than declared in the config,
+/// because their number and content are runtime facts: which ports are
+/// listening, which of the watched processes are up. The config styles them;
+/// the provider fills them.
+public struct PopupRow: Equatable, Sendable, Identifiable {
+    public var id: String
+    public var icon: String
+    public var label: String
+    /// Applied to both icon and label unless overridden.
+    public var color: Color?
+    /// Provider command to run when the row is clicked, e.g. `kill:port:3000`.
+    public var action: String?
+
+    public init(
+        id: String,
+        icon: String = "",
+        label: String = "",
+        color: Color? = nil,
+        action: String? = nil
+    ) {
+        self.id = id
+        self.icon = icon
+        self.label = label
+        self.color = color
+        self.action = action
+    }
+}
+
 /// A named visual state, replacing the `case "$STATE" in` blocks in shell plugins.
 public struct StateSpec: Equatable, Sendable {
     public var icon: Template?

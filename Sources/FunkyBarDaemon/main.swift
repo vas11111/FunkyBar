@@ -36,6 +36,7 @@ if arguments.contains("--help") || arguments.contains("-h") {
       --dump              print what every item will draw, then exit
       --dump-json         same, machine-readable (used by funkybar-measure)
       --capture PATH      render the bar to a PNG, then exit
+      --capture-popup ID  open an item's popup and render it with --capture
       --version
     """)
     exit(0)
@@ -83,8 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let dump: Bool
     let dumpJSON: Bool
     let capturePath: String?
+    let popupItem: String?
 
-    init(runtime: BarRuntime, configPath: String, duration: Double?, selfTest: Bool, dump: Bool, dumpJSON: Bool, capturePath: String?) {
+    init(runtime: BarRuntime, configPath: String, duration: Double?, selfTest: Bool, dump: Bool, dumpJSON: Bool, capturePath: String?, popupItem: String?) {
         self.runtime = runtime
         self.configPath = configPath
         self.duration = duration
@@ -92,6 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.dump = dump
         self.dumpJSON = dumpJSON
         self.capturePath = capturePath
+        self.popupItem = popupItem
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -103,6 +106,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         FileHandle.standardError.write(Data("funkybar started\n\(runtime.status)\n".utf8))
+
+        if let popupItem = self.popupItem, let capturePath {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                MainActor.assumeIsolated {
+                    let ok = self.runtime.capturePopup(popupItem, to: capturePath)
+                    print(ok ? "wrote \(capturePath)" : "popup capture failed")
+                    self.runtime.stop()
+                    exit(ok ? 0 : 1)
+                }
+            }
+            return
+        }
 
         if let capturePath {
             // One extra turn so providers have reported before we draw.
@@ -161,7 +176,8 @@ let delegate = AppDelegate(
     selfTest: arguments.contains("--selftest"),
     dump: arguments.contains("--dump") || arguments.contains("--dump-json"),
     dumpJSON: arguments.contains("--dump-json"),
-    capturePath: value(after: "--capture")
+    capturePath: value(after: "--capture"),
+    popupItem: value(after: "--capture-popup")
 )
 app.delegate = delegate
 app.run()

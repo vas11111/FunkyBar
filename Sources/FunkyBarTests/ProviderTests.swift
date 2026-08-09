@@ -236,7 +236,81 @@ let processRunnerTests = Suite("Process runner") { s in
 }
 
 let providerSuites: [Suite] = [
+    popupRowTests,
     timerWheelTests,
     portsProviderTests,
     processRunnerTests,
 ]
+
+// MARK: - Popup rows
+
+let popupRowTests = Suite("Popup rows") { s in
+
+    @Sendable func withListener(_ body: (UInt16) -> Void) {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return }
+        defer { close(fd) }
+        var reuse: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+        var address = sockaddr_in()
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_addr.s_addr = INADDR_ANY.bigEndian
+        let bound = withUnsafePointer(to: &address) { p in
+            p.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bound == 0, listen(fd, 1) == 0 else { return }
+        var actual = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &actual) { p in
+            p.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
+        }
+        body(UInt16(bigEndian: actual.sin_port))
+    }
+
+    s.test("a listening port becomes a row with a kill action") { t in
+        withListener { port in
+            var options = TOMLTable()
+            options.insert(TOMLNode(.array([TOMLNode(.integer(Int(port)), at: .unknown)]), at: .unknown),
+                           for: "ports")
+            let context = ProviderContext(itemID: "ports", options: options, interval: nil)
+
+            let update = MainActor.assumeIsolated { PortsProvider(context).refresh() }
+            guard let rows = update?.rows else {
+                t.fail("no rows produced")
+                return
+            }
+            guard let row = rows.first(where: { $0.icon == String(port) }) else {
+                t.fail("no row for port \(port); got \(rows.map(\.icon))")
+                return
+            }
+            // The scan already knows the pid, so the kill needs no second
+            // lookup the way ports_kill.sh did.
+            let action = try? t.require(row.action)
+            t.expectContains(action ?? "", "kill:pid:")
+            t.expectContains(action ?? "", String(ProcessInfo.processInfo.processIdentifier))
+        }
+    }
+
+    s.test("a stopped watched process gets a row but no kill action") { t in
+        var options = TOMLTable()
+        options.insert(TOMLNode(.array([TOMLNode(.string("definitely-not-running-xyz"), at: .unknown)]), at: .unknown),
+                       for: "watch")
+        let context = ProviderContext(itemID: "ports", options: options, interval: nil)
+
+        let update = MainActor.assumeIsolated { PortsProvider(context).refresh() }
+        let rows = try t.require(update?.rows)
+        let row = try t.require(rows.first { $0.icon == "definitely-not-running-xyz" })
+        t.expectEqual(row.label, "stopped")
+        t.expectNil(row.action, "nothing to kill, so nothing should be clickable")
+    }
+
+    s.test("an empty scan still produces a row rather than an empty popup") { t in
+        let context = ProviderContext(itemID: "ports", options: TOMLTable(), interval: nil)
+        let update = MainActor.assumeIsolated { PortsProvider(context).refresh() }
+        let rows = try t.require(update?.rows)
+        t.expectEqual(rows.count, 1)
+        t.expectContains(rows[0].label, "nothing listening")
+    }
+}

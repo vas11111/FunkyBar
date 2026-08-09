@@ -272,6 +272,12 @@ public enum ConfigDecoder {
             item.popup = spec
         }
 
+        // A popup opened by click is the obvious default action, so an item
+        // that declares one does not also have to spell out on_click.
+        if let popup = item.popup, popup.trigger == .click, item.actions[.left] == nil {
+            item.actions[.left] = .togglePopup
+        }
+
         // `repeat` expansion.
         guard let node = reader.table["repeat"] else { return [item] }
 

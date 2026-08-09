@@ -110,6 +110,13 @@ public final class BarController {
     private var nodes: [ResolvedNode] = []
     private let measuring: CachingTextMeasurer
     private var hovered: String?
+    private var popups: [String: PopupWindow] = [:]
+    private var popupRows: [String: [PopupRow]] = [:]
+    private var outsideClickMonitor: Any?
+    private var popupTimeout: DispatchWorkItem?
+
+    /// Fired when a popup row with an action is clicked.
+    public var onPopupAction: ((String, String) -> Void)?
     /// Suspended while the screens are asleep, so nothing lays out or draws.
     private(set) var isSuspended = false
 
@@ -134,6 +141,137 @@ public final class BarController {
     public func apply(nodes newNodes: [ResolvedNode]) {
         nodes = newNodes
         redraw()
+        // A visible popup must follow its provider, not freeze at whatever was
+        // true when it opened.
+        for (id, popup) in popups where popup.isVisible { refreshPopup(id) }
+    }
+
+    /// Latest popup contents for an item, supplied by its provider.
+    public func setPopupRows(_ rows: [PopupRow], for itemID: String) {
+        popupRows[itemID] = rows
+        if popups[itemID]?.isVisible == true { refreshPopup(itemID) }
+    }
+
+    // MARK: - Popups
+
+    public func togglePopup(for itemID: String, config: Config) {
+        if popups[itemID]?.isVisible == true {
+            closePopup(itemID)
+        } else {
+            openPopup(itemID, config: config)
+        }
+    }
+
+    /// Opens a popup and renders it, for diagnostics.
+    @discardableResult
+    public func capturePopup(_ itemID: String, config: Config, to path: String) -> Bool {
+        openPopup(itemID, config: config)
+        guard let popup = popups[itemID] else { return false }
+        return popup.capture(to: path)
+    }
+
+    public func closeAllPopups() {
+        for id in popups.keys { closePopup(id) }
+    }
+
+    private func popupSpec(for itemID: String, in config: Config) -> PopupSpec? {
+        config.allItems.first { $0.id == itemID }?.popup
+    }
+
+    private var popupConfig: Config?
+
+    private func openPopup(_ itemID: String, config: Config) {
+        guard let spec = popupSpec(for: itemID, in: config) else { return }
+        // Only one open at a time; two popups on a status bar is never wanted.
+        closeAllPopups()
+        popupConfig = config
+
+        let popup = popups[itemID] ?? {
+            let created = PopupWindow(itemID: itemID, config: self.config)
+            created.onRowClick = { [weak self] item, row in
+                guard let action = row.action else { return }
+                self?.onPopupAction?(item, action)
+            }
+            created.onMouseExit = { [weak self] in
+                guard let self, let spec = self.popupSpec(for: itemID, in: config) else { return }
+                guard spec.dismiss.contains(.mouseExit) else { return }
+                self.closePopup(itemID)
+            }
+            popups[itemID] = created
+            return created
+        }()
+
+        refreshPopup(itemID)
+        popup.show()
+        installDismissal(for: itemID, spec: spec)
+    }
+
+    private func refreshPopup(_ itemID: String) {
+        guard let popup = popups[itemID],
+              let config = popupConfig,
+              let spec = popupSpec(for: itemID, in: config),
+              let display = displays.values.first(where: { $0.lastLayout?.item(itemID) != nil })
+                ?? displays.values.first,
+              let frame = display.lastLayout?.item(itemID)
+        else { return }
+
+        // The anchor is the item's pill in screen coordinates.
+        let box = frame.background == .zero ? frame.frame : frame.background
+        let anchor = CGRect(
+            x: display.panel.frame.minX + box.minX,
+            y: display.panel.frame.minY + box.minY,
+            width: box.width,
+            height: box.height
+        )
+
+        popup.apply(
+            rows: popupRows[itemID] ?? [],
+            spec: spec,
+            defaults: config.defaults,
+            anchor: anchor,
+            screen: display.screen,
+            barConfig: self.config,
+            contentsScale: display.screen.backingScaleFactor
+        )
+    }
+
+    private func closePopup(_ itemID: String) {
+        popups[itemID]?.hide()
+        removeDismissal()
+    }
+
+    private func installDismissal(for itemID: String, spec: PopupSpec) {
+        removeDismissal()
+
+        if spec.dismiss.contains(.clickOutside) {
+            // A global monitor sees clicks destined for other applications,
+            // which is the only way to notice a click that never reaches us.
+            outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+                matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    let mouse = NSEvent.mouseLocation
+                    guard self.popups[itemID]?.contains(screenPoint: mouse) != true else { return }
+                    self.closePopup(itemID)
+                }
+            }
+        }
+
+        for case .timeout(let seconds) in spec.dismiss {
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated { self?.closePopup(itemID) }
+            }
+            popupTimeout = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+        }
+    }
+
+    private func removeDismissal() {
+        if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
+        outsideClickMonitor = nil
+        popupTimeout?.cancel()
+        popupTimeout = nil
     }
 
     private func redraw() {
@@ -152,6 +290,9 @@ public final class BarController {
     }
 
     public func stop() {
+        removeDismissal()
+        for popup in popups.values { popup.close() }
+        popups.removeAll()
         for display in displays.values { display.close() }
         displays.removeAll()
     }
@@ -237,6 +378,7 @@ public final class BarController {
     /// Stops all drawing. Paired with `resume` on wake.
     public func suspend() {
         isSuspended = true
+        closeAllPopups()
     }
 
     /// Rebuilds everything from scratch.

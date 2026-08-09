@@ -11,17 +11,21 @@ public struct ProviderUpdate: Sendable, Equatable {
     public var expansion: [String]?
     /// Per-clone field overrides, keyed by full item id.
     public var perItem: [String: [String: String]]
+    /// Popup contents. `nil` means "unchanged"; empty means "no rows".
+    public var rows: [PopupRow]?
 
     public init(
         itemID: String,
         values: [String: String] = [:],
         expansion: [String]? = nil,
-        perItem: [String: [String: String]] = [:]
+        perItem: [String: [String: String]] = [:],
+        rows: [PopupRow]? = nil
     ) {
         self.itemID = itemID
         self.values = values
         self.expansion = expansion
         self.perItem = perItem
+        self.rows = rows
     }
 }
 

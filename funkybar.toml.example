@@ -176,6 +176,15 @@ icon     = "󰒍"
   on      = "click"
   dismiss = ["mouse_exit", "click_outside"]
 
+    # The sketchybarrc sets these as popup.background.*; here the popup has a
+    # style like anything else that draws a box.
+    [item.popup.style]
+    color         = "$pill_bg"
+    border_color  = "$pill_border"
+    border_width  = 1
+    corner_radius = 12
+    padding       = { left = 6, right = 6, top = 6, bottom = 6 }
+
   [item.states.chain]
   color = "$ok"
 

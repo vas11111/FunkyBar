@@ -22,6 +22,11 @@ public final class PortsProvider: Provider {
 
     private let watchedPorts: Set<UInt16>
     private let watchedProcesses: [String]
+    private var lastScan: Scan?
+
+    private static let okColor = (try? Color.parse("#56d364").get()) ?? .white
+    private static let idleColor = (try? Color.parse("#6e7681").get()) ?? .white
+    private static let textColor = (try? Color.parse("#f1d9a4").get()) ?? .white
 
     public init(_ context: ProviderContext) {
         itemID = context.itemID
@@ -34,6 +39,7 @@ public final class PortsProvider: Provider {
 
     public func refresh() -> ProviderUpdate? {
         let scan = Self.scan(ports: watchedPorts, processes: Set(watchedProcesses))
+        lastScan = scan
 
         var parts: [String] = []
         for name in watchedProcesses where scan.runningProcesses.contains(name) {
@@ -48,12 +54,75 @@ public final class PortsProvider: Provider {
         else if !scan.listening.isEmpty { state = "ports" }
         else { state = "idle" }
 
-        return ProviderUpdate(itemID: itemID, values: [
-            "label": parts.isEmpty ? "IDLE" : parts.joined(separator: "·"),
-            "state": state,
-            "count": String(scan.listening.count),
-            "ports": scan.listening.map { String($0.port) }.sorted().joined(separator: ","),
-        ])
+        return ProviderUpdate(
+            itemID: itemID,
+            values: [
+                "label": parts.isEmpty ? "IDLE" : parts.joined(separator: "·"),
+                "state": state,
+                "count": String(scan.listening.count),
+                "ports": scan.listening.map { String($0.port) }.sorted().joined(separator: ","),
+            ],
+            rows: rows(for: scan)
+        )
+    }
+
+    /// Popup contents: watched processes first, then every listening port.
+    ///
+    /// Replaces ports_click.sh, which rebuilt the rows by removing and
+    /// re-adding sketchybar items on every open, and ports_kill.sh, which
+    /// shelled out to lsof again to find what to kill. The scan already knows
+    /// the pid, so a row carries it and the kill needs no second lookup.
+    private func rows(for scan: Scan) -> [PopupRow] {
+        var out: [PopupRow] = []
+
+        for name in watchedProcesses {
+            let running = scan.runningProcesses.contains(name)
+            out.append(PopupRow(
+                id: "proc.\(name)",
+                icon: name,
+                label: running ? "running ✕" : "stopped",
+                color: running ? Self.okColor : Self.idleColor,
+                action: running ? "kill:name:\(name)" : nil
+            ))
+        }
+
+        for listener in scan.listening.sorted(by: { $0.port < $1.port }) {
+            out.append(PopupRow(
+                id: "port.\(listener.port)",
+                icon: String(listener.port),
+                label: "\(listener.process) ✕",
+                color: Self.textColor,
+                action: "kill:pid:\(listener.pid)"
+            ))
+        }
+
+        if out.isEmpty {
+            out.append(PopupRow(id: "none", icon: "—", label: "nothing listening", color: Self.idleColor))
+        }
+        return out
+    }
+
+    /// `kill:name:<proc>` or `kill:pid:<pid>`, sent by a popup row click.
+    ///
+    /// TERM first, KILL if it survives, matching ports_kill.sh, but without
+    /// re-deriving the target: the row already carries it.
+    public func handle(command: String) {
+        let parts = command.split(separator: ":").map(String.init)
+        guard parts.count == 3, parts[0] == "kill" else { return }
+
+        let target = parts[2]
+        let command: String
+        switch parts[1] {
+        case "pid":
+            guard let pid = Int32(target) else { return }
+            command = "kill \(pid) 2>/dev/null; sleep 2; kill -9 \(pid) 2>/dev/null; true"
+        case "name":
+            command = "pkill -x '\(target)' 2>/dev/null; sleep 2; pkill -9 -x '\(target)' 2>/dev/null; true"
+        default:
+            return
+        }
+
+        ProcessRunner(timeout: 8).run(command) { _ in }
     }
 
     // MARK: - Scanning

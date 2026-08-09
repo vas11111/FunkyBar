@@ -80,7 +80,7 @@ public struct TOMLTable: Sendable, Equatable {
         keys.compactMap { key in storage[key].map { (key, $0) } }
     }
 
-    mutating func insert(_ node: TOMLNode, for key: String) {
+    public mutating func insert(_ node: TOMLNode, for key: String) {
         if storage[key] == nil { keys.append(key) }
         storage[key] = node
     }
