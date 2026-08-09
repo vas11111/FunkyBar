@@ -196,7 +196,10 @@ final class TextLayer: CALayer {
         ctx.textMatrix = .identity
         ctx.setFillColor(color)
 
-        ctx.textPosition = penPoint
+        // Zero, not penPoint. CTFontDrawGlyphs honours the context's text
+        // position *and* the per-glyph positions below, so setting both applied
+        // the pen offset twice and pushed every glyph 6pt off centre.
+        ctx.textPosition = .zero
 
         for run in CTLineGetGlyphRuns(shaped.line) as! [CTRun] {
             let attributes = CTRunGetAttributes(run) as NSDictionary

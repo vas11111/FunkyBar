@@ -40,6 +40,7 @@ final class BarLayerTree {
     private let shaper = CoreTextShaper()
     private var scale: CGFloat = 2
     var allowsFontSmoothing = false
+    static let traceText = ProcessInfo.processInfo.environment["FUNKYBAR_DEBUG_TEXT"] == "1"
 
     init(root: CALayer) {
         self.root = root
@@ -218,6 +219,15 @@ final class BarLayerTree {
         )
         if layer.frame != frame { layer.frame = frame }
         if layer.penPoint != pen { layer.penPoint = pen }
+
+        if BarLayerTree.traceText {
+            let report = String(
+                format: "text: layout.midY=%.2f asc=%.2f desc=%.2f baseline=%.2f frame.y=%.2f h=%.2f pen.y=%.2f flipped=%@\n",
+                layoutRect.midY, shaped.ascent, shaped.descent, baselineY,
+                frame.minY, frame.height, pen.y,
+                layer.contentsAreFlipped() ? "YES" : "no")
+            FileHandle.standardError.write(Data(report.utf8))
+        }
     }
 
     // MARK: - Layer construction
