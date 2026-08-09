@@ -14,6 +14,16 @@ public struct BarEvent: Sendable {
 
     public let itemID: String
     public let kind: Kind
+    /// Which display the event happened on. Without this a popup anchors to
+    /// whichever display a dictionary happens to yield first, which is upstream
+    /// issue #742: the popup opens on the wrong screen.
+    public let displayID: CGDirectDisplayID
+
+    public init(itemID: String, kind: Kind, displayID: CGDirectDisplayID = 0) {
+        self.itemID = itemID
+        self.kind = kind
+        self.displayID = displayID
+    }
 }
 
 /// One display's bar.
@@ -162,18 +172,18 @@ public final class BarController {
 
     // MARK: - Popups
 
-    public func togglePopup(for itemID: String, config: Config) {
+    public func togglePopup(for itemID: String, config: Config, on displayID: CGDirectDisplayID = 0) {
         if popups[itemID]?.isVisible == true {
             closePopup(itemID)
         } else {
-            openPopup(itemID, config: config)
+            openPopup(itemID, config: config, on: displayID)
         }
     }
 
     /// Opens a popup and renders it, for diagnostics.
     @discardableResult
     public func capturePopup(_ itemID: String, config: Config, to path: String) -> Bool {
-        openPopup(itemID, config: config)
+        openPopup(itemID, config: config, on: NSScreen.main?.displayID ?? 0)
         guard let popup = popups[itemID] else { return false }
         return popup.capture(to: path)
     }
@@ -188,11 +198,14 @@ public final class BarController {
 
     private var popupConfig: Config?
 
-    private func openPopup(_ itemID: String, config: Config) {
+    private var popupDisplay: [String: CGDirectDisplayID] = [:]
+
+    private func openPopup(_ itemID: String, config: Config, on displayID: CGDirectDisplayID = 0) {
         guard let spec = popupSpec(for: itemID, in: config) else { return }
         // Only one open at a time; two popups on a status bar is never wanted.
         closeAllPopups()
         popupConfig = config
+        popupDisplay[itemID] = displayID
 
         let popup = popups[itemID] ?? {
             let created = PopupWindow(itemID: itemID, config: self.config)
@@ -218,7 +231,8 @@ public final class BarController {
         guard let popup = popups[itemID],
               let config = popupConfig,
               let spec = popupSpec(for: itemID, in: config),
-              let display = displays.values.first(where: { $0.lastLayout?.item(itemID) != nil })
+              let display = popupDisplay[itemID].flatMap({ displays[$0] })
+                ?? displays.values.first(where: { $0.lastLayout?.item(itemID) != nil })
                 ?? displays.values.first,
               let frame = display.lastLayout?.item(itemID)
         else { return }
@@ -333,7 +347,7 @@ public final class BarController {
                 existing.reposition(config: config)
             } else {
                 let display = BarDisplay(screen: screen, config: config)
-                wire(display)
+                wire(display, id: id)
                 displays[id] = display
                 display.show()
             }
@@ -345,21 +359,21 @@ public final class BarController {
         }
     }
 
-    private func wire(_ display: BarDisplay) {
+    private func wire(_ display: BarDisplay, id displayID: CGDirectDisplayID) {
         display.view.onMouseDown = { [weak self, weak display] point, button, _ in
             guard let self, let display, let id = display.hitTest(point) else { return }
-            self.onEvent?(BarEvent(itemID: id, kind: .click(button)))
+            self.onEvent?(BarEvent(itemID: id, kind: .click(button), displayID: displayID))
         }
         display.view.onScroll = { [weak self, weak display] point, delta, precise in
             guard let self, let display, let id = display.hitTest(point) else { return }
-            self.onEvent?(BarEvent(itemID: id, kind: .scroll(delta: delta, precise: precise)))
+            self.onEvent?(BarEvent(itemID: id, kind: .scroll(delta: delta, precise: precise), displayID: displayID))
         }
         display.view.onMouseMoved = { [weak self, weak display] point in
             guard let self, let display else { return }
             let id = point.flatMap { display.hitTest($0) }
             guard id != self.hovered else { return }
             if let previous = self.hovered {
-                self.onEvent?(BarEvent(itemID: previous, kind: .hoverExit))
+                self.onEvent?(BarEvent(itemID: previous, kind: .hoverExit, displayID: displayID))
             }
             self.hovered = id
             if let id {

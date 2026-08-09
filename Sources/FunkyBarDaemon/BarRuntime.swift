@@ -264,7 +264,7 @@ final class BarRuntime {
             providers[name]?.handle(command: command)
 
         case .togglePopup:
-            controller.togglePopup(for: event.itemID, config: config)
+            controller.togglePopup(for: event.itemID, config: config, on: event.displayID)
         }
     }
 
