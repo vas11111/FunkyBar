@@ -1,5 +1,7 @@
 import AppKit
 import FunkyBarCore
+import ImageIO
+import UniformTypeIdentifiers
 
 /// What the bar reports back to the daemon.
 public struct BarEvent: Sendable {
@@ -250,6 +252,52 @@ public final class BarController {
     }
 
     public var displayCount: Int { displays.count }
+
+    /// Renders the main display's bar into a PNG.
+    ///
+    /// `CALayer.render(in:)` draws the tree into a bitmap we own, so this needs
+    /// no Screen Recording grant and shows exactly what we draw, rather than a
+    /// proxy for it. Every measurement short of this compares properties;
+    /// this compares pixels.
+    @discardableResult
+    public func capture(to path: String, scale: CGFloat = 2) -> Bool {
+        guard let display = (NSScreen.main?.displayID).flatMap({ displays[$0] })
+                ?? displays.values.first,
+              let layer = display.view.layer
+        else { return false }
+
+        let bounds = layer.bounds
+        let pixelWidth = Int((bounds.width * scale).rounded(.up))
+        let pixelHeight = Int((bounds.height * scale).rounded(.up))
+        guard pixelWidth > 0, pixelHeight > 0 else { return false }
+
+        guard let context = CGContext(
+            data: nil,
+            width: pixelWidth,
+            height: pixelHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: pixelWidth * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
+                | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else { return false }
+
+        // A dark ground, so antialiased glyph edges read the way they do over
+        // the real bar rather than over transparency.
+        context.setFillColor(CGColor(srgbRed: 0.15, green: 0.32, blue: 0.55, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight))
+        context.scaleBy(x: scale, y: scale)
+
+        layer.render(in: context)
+
+        guard let image = context.makeImage() else { return false }
+        let url = URL(fileURLWithPath: path)
+        guard let destination = CGImageDestinationCreateWithURL(
+            url as CFURL, "public.png" as CFString, 1, nil
+        ) else { return false }
+        CGImageDestinationAddImage(destination, image, nil)
+        return CGImageDestinationFinalize(destination)
+    }
 
     /// The most recent layout for the main display, for diagnostics.
     ///

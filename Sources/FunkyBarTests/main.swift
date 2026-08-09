@@ -9,6 +9,7 @@ let allSuites: [Suite] =
     + layoutSuites
     + providerSuites
     + regressionSuites
+    + renderSuites
 
 let filter = CommandLine.arguments.dropFirst().first
 exit(TestRunner.run(allSuites, filter: filter))

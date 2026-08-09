@@ -62,15 +62,33 @@ public struct ShapedText {
     /// Typographic metrics, used for the baseline.
     public let ascent: CGFloat
     public let descent: CGFloat
-
-    /// Distance from the bottom of a `height`-tall box to the text baseline.
+    /// Raw ink bounds relative to the pen origin, before rounding.
     ///
-    /// sketchybar places the baseline at `centreY - (ascent - descent) / 2`.
-    /// Given a box centred on `centreY`, that is this far above its bottom
-    /// edge. Deriving it keeps the two implementations agreeing even though
-    /// the box height comes from ink bounds and the baseline from typographic
-    /// metrics.
-    public var baselineOffset: CGFloat { (height - ascent + descent) / 2 }
+    /// Needed because ink is not anchored at the pen: `›` advances 8.4pt but
+    /// its ink is ~5pt wide starting ~1.7pt in. Sizing a layer to the ink box
+    /// and drawing at its origin clips the glyph.
+    public let ink: CGRect
+
+    /// Padding around the drawing box, so antialiased edges are never cut.
+    public static let inset: CGFloat = 2
+
+    /// Size of the layer needed to hold this glyph run without clipping.
+    ///
+    /// The layout box uses ink width, but the *drawing* box has to span from
+    /// the pen origin out past the ink, which can start right of the pen and
+    /// rise above the ascent.
+    public var drawingSize: CGSize {
+        CGSize(
+            width: max(ink.maxX, width) + Self.inset * 2,
+            height: max(ascent + descent, ink.height) + Self.inset * 2
+        )
+    }
+
+    /// Where the pen goes inside a `drawingSize` box, so the baseline lands
+    /// at `centreY - (ascent - descent) / 2` exactly as sketchybar places it.
+    public var penPoint: CGPoint {
+        CGPoint(x: Self.inset, y: descent + Self.inset)
+    }
 }
 
 /// Shapes and measures text with CoreText.
@@ -105,7 +123,8 @@ public struct CoreTextShaper: Sendable {
             width: (ink.width + 1.5).rounded(.down),
             height: (ink.height + 1.5).rounded(.down),
             ascent: ascent,
-            descent: descent
+            descent: descent,
+            ink: ink
         )
     }
 }
@@ -137,6 +156,10 @@ final class TextLayer: CALayer {
     var color: CGColor = NSColor.white.cgColor {
         didSet { setNeedsDisplay() }
     }
+    /// Pen origin in layer coordinates.
+    var penPoint: CGPoint = .zero {
+        didSet { setNeedsDisplay() }
+    }
     /// Mirrors sketchybar's `CGContextSetAllowsFontSmoothing`, off by default.
     var allowsFontSmoothing = false {
         didSet { setNeedsDisplay() }
@@ -155,6 +178,7 @@ final class TextLayer: CALayer {
         if let other = layer as? TextLayer {
             shaped = other.shaped
             color = other.color
+            penPoint = other.penPoint
             allowsFontSmoothing = other.allowsFontSmoothing
         }
     }
@@ -172,7 +196,7 @@ final class TextLayer: CALayer {
         ctx.textMatrix = .identity
         ctx.setFillColor(color)
 
-        ctx.textPosition = CGPoint(x: 0, y: shaped.baselineOffset)
+        ctx.textPosition = penPoint
 
         for run in CTLineGetGlyphRuns(shaped.line) as! [CTRun] {
             let attributes = CTRunGetAttributes(run) as NSDictionary
@@ -187,7 +211,8 @@ final class TextLayer: CALayer {
             // Draw glyphs directly rather than via CTLineDraw so the fill
             // colour set above wins over any colour baked into the run.
             for index in 0 ..< count {
-                positions[index].y += shaped.baselineOffset
+                positions[index].x += penPoint.x
+                positions[index].y += penPoint.y
             }
             CTFontDrawGlyphs(font, glyphs, positions, count, ctx)
         }

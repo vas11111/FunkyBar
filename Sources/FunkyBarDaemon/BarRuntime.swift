@@ -285,6 +285,9 @@ final class BarRuntime {
 
     var displayCount: Int { controller.displayCount }
 
+    @discardableResult
+    func capture(to path: String) -> Bool { controller.capture(to: path) }
+
     /// What each item will actually draw, with provider values folded in.
     ///
     /// This is the diagnostic that catches wrong glyphs, empty labels and

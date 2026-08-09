@@ -166,7 +166,7 @@ final class BarLayerTree {
             }
             let cgColor = item.iconColor.cgColor
             if layer.color != cgColor { layer.color = cgColor }
-            if layer.frame != frame.icon { layer.frame = frame.icon }
+            place(layer, layoutRect: frame.icon)
         } else {
             layers.icon?.removeFromSuperlayer()
             layers.icon = nil
@@ -184,7 +184,7 @@ final class BarLayerTree {
             }
             let cgColor = item.labelColor.cgColor
             if layer.color != cgColor { layer.color = cgColor }
-            if layer.frame != frame.label { layer.frame = frame.label }
+            place(layer, layoutRect: frame.label)
         } else {
             layers.label?.removeFromSuperlayer()
             layers.label = nil
@@ -192,6 +192,32 @@ final class BarLayerTree {
         }
 
         items[frame.id] = layers
+    }
+
+    /// Positions a text layer so its glyphs are drawn where sketchybar draws
+    /// them, in a box large enough to hold them.
+    ///
+    /// The layout rect and the drawing box are not the same thing. Layout
+    /// measures ink width, because that is what sketchybar spaces items by; but
+    /// ink is not anchored at the pen, so a layer sized to the ink box clips
+    /// glyphs whose ink starts right of the pen or rises above it. `›` lost its
+    /// right half and its top to exactly that.
+    private func place(_ layer: TextLayer, layoutRect: CGRect) {
+        guard let shaped = layer.shaped else { return }
+
+        // sketchybar: baseline at centreY - (ascent - descent) / 2.
+        let baselineY = layoutRect.midY - (shaped.ascent - shaped.descent) / 2
+        let size = shaped.drawingSize
+        let pen = shaped.penPoint
+
+        let frame = CGRect(
+            x: layoutRect.minX - pen.x,
+            y: baselineY - pen.y,
+            width: size.width,
+            height: size.height
+        )
+        if layer.frame != frame { layer.frame = frame }
+        if layer.penPoint != pen { layer.penPoint = pen }
     }
 
     // MARK: - Layer construction

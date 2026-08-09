@@ -45,7 +45,7 @@ let package = Package(
         .target(name: "TestKit"),
         .executableTarget(
             name: "FunkyBarTests",
-            dependencies: ["TestKit", "FunkyBarCore", "FunkyBarIPC", "FunkyBarProviders"]
+            dependencies: ["TestKit", "FunkyBarCore", "FunkyBarIPC", "FunkyBarProviders", "FunkyBarRender"]
         ),
     ]
 )

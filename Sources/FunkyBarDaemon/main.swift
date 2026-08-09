@@ -35,6 +35,7 @@ if arguments.contains("--help") || arguments.contains("-h") {
       --selftest          start, verify the window is really on screen, exit
       --dump              print what every item will draw, then exit
       --dump-json         same, machine-readable (used by funkybar-measure)
+      --capture PATH      render the bar to a PNG, then exit
       --version
     """)
     exit(0)
@@ -81,14 +82,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let selfTest: Bool
     let dump: Bool
     let dumpJSON: Bool
+    let capturePath: String?
 
-    init(runtime: BarRuntime, configPath: String, duration: Double?, selfTest: Bool, dump: Bool, dumpJSON: Bool) {
+    init(runtime: BarRuntime, configPath: String, duration: Double?, selfTest: Bool, dump: Bool, dumpJSON: Bool, capturePath: String?) {
         self.runtime = runtime
         self.configPath = configPath
         self.duration = duration
         self.selfTest = selfTest
         self.dump = dump
         self.dumpJSON = dumpJSON
+        self.capturePath = capturePath
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -100,6 +103,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         FileHandle.standardError.write(Data("funkybar started\n\(runtime.status)\n".utf8))
+
+        if let capturePath {
+            // One extra turn so providers have reported before we draw.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                MainActor.assumeIsolated {
+                    let ok = self.runtime.capture(to: capturePath)
+                    print(ok ? "wrote \(capturePath)" : "capture failed")
+                    self.runtime.stop()
+                    exit(ok ? 0 : 1)
+                }
+            }
+            return
+        }
 
         if dump {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
@@ -144,7 +160,8 @@ let delegate = AppDelegate(
     duration: value(after: "--duration").flatMap(Double.init),
     selfTest: arguments.contains("--selftest"),
     dump: arguments.contains("--dump") || arguments.contains("--dump-json"),
-    dumpJSON: arguments.contains("--dump-json")
+    dumpJSON: arguments.contains("--dump-json"),
+    capturePath: value(after: "--capture")
 )
 app.delegate = delegate
 app.run()
