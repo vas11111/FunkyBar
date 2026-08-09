@@ -206,8 +206,12 @@ final class BarLayerTree {
     private func place(_ layer: TextLayer, layoutRect: CGRect) {
         guard let shaped = layer.shaped else { return }
 
-        // sketchybar: baseline at centreY - (ascent - descent) / 2.
-        let baselineY = layoutRect.midY - (shaped.ascent - shaped.descent) / 2
+        // sketchybar: bounds.origin.y = (uint32_t)(y - (ascent - descent) / 2).
+        // The cast truncates, so the baseline always lands on a whole point.
+        // Leaving it fractional rasterises every glyph slightly differently,
+        // which showed up as 1-3pt differences in the gaps between digits even
+        // though every item rect matched exactly.
+        let baselineY = (layoutRect.midY - (shaped.ascent - shaped.descent) / 2).rounded(.down)
         let size = shaped.drawingSize
         let pen = shaped.penPoint
 

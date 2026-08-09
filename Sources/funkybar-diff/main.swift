@@ -71,11 +71,13 @@ let scale: Double = width > 2600 ? 2 : 1
 // MARK: - Row detection
 
 @MainActor func detectRows() -> [Int] {
-    // A bar row has a long horizontal band of dark pixels. Take the densest
-    // rows, then collapse each contiguous band to its centre.
+    // A bar row is a thick horizontal band of dark pixels. Density alone is not
+    // enough: a screenshot usually includes a dark strip at the very top from
+    // the desktop or menu bar, which is dense but only a few rows tall, and
+    // treating it as a bar makes the tool compare the wrong two things.
     var dense: [Int] = []
     let threshold = width / 12
-    for y in 0 ..< min(height, 400) where pillCount(inRow: y) > threshold { dense.append(y) }
+    for y in 0 ..< height where pillCount(inRow: y) > threshold { dense.append(y) }
     guard !dense.isEmpty else { return [] }
 
     var bands: [[Int]] = []
@@ -84,7 +86,15 @@ let scale: Double = width > 2600 ? 2 : 1
         if y - current.last! <= 2 { current.append(y) } else { bands.append(current); current = [y] }
     }
     bands.append(current)
-    return bands.map { $0[$0.count / 2] }
+
+    // A pill is ~24pt tall, so require most of that before believing a band.
+    let minimumThickness = Int(14 * scale)
+    let bars = bands.filter { $0.count >= minimumThickness }
+    guard bars.count >= 2 else {
+        return bands.sorted { $0.count > $1.count }.prefix(2)
+            .map { $0[$0.count / 2] }.sorted()
+    }
+    return bars.map { $0[$0.count / 2] }
 }
 
 var rows: [Int]
@@ -132,9 +142,23 @@ print("   " + String(repeating: "-", count: 68))
 
 var worstX = 0.0
 var worstW = 0.0
+var matched = 0
+var unmatchedA: [Int] = []
+var pool = Array(runsB.enumerated())
+
 for (index, a) in runsA.enumerated() {
-    guard index < runsB.count else { break }
-    let b = runsB[index]
+    // Nearest start wins, within a tolerance. Index alignment breaks as soon
+    // as one row has an extra run, which turns every later comparison into
+    // noise.
+    let best = pool.min { abs($0.element.start - a.start) < abs($1.element.start - a.start) }
+    guard let best, abs(best.element.start - a.start) < 8 else {
+        unmatchedA.append(index + 1)
+        continue
+    }
+    pool.removeAll { $0.offset == best.offset }
+    let b = best.element
+
+    matched += 1
     let dx = b.start - a.start
     let dw = b.width - a.width
     worstX = max(worstX, abs(dx))
@@ -144,9 +168,15 @@ for (index, a) in runsA.enumerated() {
                  index + 1, a.start, a.end, a.width, b.start, b.end, b.width, dx, dw, flag as NSString))
 }
 
-if runsA.count != runsB.count {
-    print("\n   pill counts differ: \(runsA.count) vs \(runsB.count); rows past the shorter list are unaligned")
+if !unmatchedA.isEmpty {
+    print("\n   sketchybar runs with no counterpart: \(unmatchedA.map(String.init).joined(separator: ", "))")
 }
+if !pool.isEmpty {
+    let extras = pool.map { String(format: "%.1f..%.1f", $0.element.start, $0.element.end) }
+    print("   funkybar runs with no counterpart: \(extras.joined(separator: ", "))")
+}
+print("   matched \(matched)/\(runsA.count)")
+
 print(String(format: "\n   worst |dx| = %.1fpt   worst |dw| = %.1fpt", worstX, worstW))
 
 // MARK: - Vertical extents
