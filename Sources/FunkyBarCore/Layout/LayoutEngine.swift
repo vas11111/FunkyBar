@@ -253,7 +253,7 @@ public enum LayoutEngine {
             items.append(placeItem(item, measured: measured, originX: originX, bar: bar, measuring: measuring))
 
         case .group(let group):
-            let centerY = bar.height / 2 + bar.offset.y
+            let centerY = bar.height / 2
             let frame = CGRect(
                 x: originX,
                 y: centerY - measured.height / 2,
@@ -291,7 +291,7 @@ public enum LayoutEngine {
         bar: BarConfig,
         measuring: any TextMeasuring
     ) -> ItemFrame {
-        let centerY = bar.height / 2 + bar.offset.y + item.offset.y
+        let centerY = bar.height / 2 + item.offset.y
         let frame = CGRect(
             x: originX + item.offset.x,
             y: centerY - measured.height / 2,

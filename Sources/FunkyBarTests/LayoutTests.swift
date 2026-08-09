@@ -312,11 +312,20 @@ let layoutVerticalTests = Suite("Layout vertical placement") { s in
         t.expectEqual(frame.frame.midY, 20)
     }
 
-    s.test("the bar offset shifts everything") { t in
+    s.test("the bar offset moves the bar, not the content inside it") { t in
+        // sketchybar's y_offset positions the bar window: its windows sit at
+        // screen y=4 with y_offset=4. Applying it to the contents instead left
+        // every pill 8pt high on screen while every item still agreed with
+        // every other item, so per-item comparison could never see it.
         var config = bar(height: 40)
         config.offset = Offset(x: 0, y: 4)
-        let frame = try t.require(layout([.item(makeItem("a", label: "AA"))], bar: config).item("a"))
-        t.expectEqual(frame.frame.midY, 24)
+
+        let withOffset = try t.require(layout([.item(makeItem("a", label: "AA"))], bar: config).item("a"))
+        let without = try t.require(layout([.item(makeItem("a", label: "AA"))], bar: bar(height: 40)).item("a"))
+
+        t.expectEqual(withOffset.frame.midY, 20, "content stays centred in the bar")
+        t.expectEqual(withOffset.frame.midY, without.frame.midY,
+                      "the bar offset must not move content relative to the bar")
     }
 
     s.test("a per-item offset applies on both axes") { t in

@@ -40,15 +40,19 @@ final class BarDisplay {
     static func frame(for screen: NSScreen, config: BarConfig) -> CGRect {
         let visible = screen.frame
         let width = visible.width - config.margin.horizontal
-        let x = visible.minX + config.margin.leading
+        let x = visible.minX + config.margin.leading + config.offset.x
 
+        // The offset moves the bar, not its contents. sketchybar's windows sit
+        // at screen y=4 with y_offset=4, so a positive offset pushes a top bar
+        // down from the screen edge. Applying it to the contents instead left
+        // every pill 8pt high: 4pt from moving them the wrong way, 4pt from not
+        // moving the bar.
         let y: CGFloat
         switch config.edge {
         case .top:
-            // `frame` includes the menu bar strip; sit just under the top edge.
-            y = visible.maxY - config.height - config.margin.top
+            y = visible.maxY - config.height - config.margin.top - config.offset.y
         case .bottom:
-            y = visible.minY + config.margin.bottom
+            y = visible.minY + config.margin.bottom + config.offset.y
         }
 
         return CGRect(x: x, y: y, width: width, height: config.height)

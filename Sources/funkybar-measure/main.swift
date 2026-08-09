@@ -17,6 +17,8 @@ import Foundation
 struct Rect {
     let x: Double
     let width: Double
+    let y: Double
+    let height: Double
     var right: Double { x + width }
 }
 
@@ -39,7 +41,7 @@ func sketchybarRects(stripY: Double, screenWidth: Double) -> [Rect] {
         // Drop the bar's own backing window, which spans the whole display and
         // corresponds to nothing in funkybar's per-item list.
         guard rect.width < screenWidth * 0.9 else { return nil }
-        return Rect(x: rect.minX, width: rect.width)
+        return Rect(x: rect.minX, width: rect.width, y: rect.minY, height: rect.height)
     }
     .sorted { $0.x < $1.x }
 }
@@ -89,7 +91,7 @@ func funkybarDump(configPath: String) -> [DumpItem] {
         let detail = text.range(of: "icon=").map { String(text[$0.lowerBound...]) }
             ?? text.range(of: "label=").map { String(text[$0.lowerBound...]) }
             ?? ""
-        out.append(DumpItem(id: id, rect: Rect(x: x, width: w), detail: String(detail.prefix(34))))
+        out.append(DumpItem(id: id, rect: Rect(x: x, width: w, y: 0, height: 0), detail: String(detail.prefix(34))))
     }
     return out.sorted { $0.rect.x < $1.rect.x }
 }
@@ -112,6 +114,32 @@ let screenWidth = NSScreen.screens
     .max(by: { $0.frame.width < $1.frame.width })?.frame.width ?? 3000
 let sketchy = sketchybarRects(stripY: argument("--sketchybar-y", default: 4), screenWidth: Double(screenWidth))
 let funky = funkybarDump(configPath: configPath)
+
+// The bar's own screen position was never compared, only per-item x and
+// width. That is how an 8pt vertical offset survived several rounds of
+// "0.0pt difference": every item agreed with every other item, and the whole
+// bar was in the wrong place.
+if let theirTop = sketchy.map(\.y).min() {
+    let ours = NSScreen.screens.compactMap { screen -> Double? in
+        guard let info = CGWindowListCopyWindowInfo(
+            [.optionAll, .excludeDesktopElements], kCGNullWindowID
+        ) as? [[String: Any]] else { return nil }
+        _ = screen
+        return info.compactMap { w -> Double? in
+            guard (w[kCGWindowOwnerName as String] as? String) == "funkybard",
+                  (w[kCGWindowIsOnscreen as String] as? Bool) == true,
+                  let d = w[kCGWindowBounds as String] as? [String: Any],
+                  let r = CGRect(dictionaryRepresentation: d as CFDictionary),
+                  r.minY >= 0, r.minY < 200, r.minX >= 0, r.minX < 3000 else { return nil }
+            return r.minY
+        }.min()
+    }.min()
+
+    print("  bar strip: sketchybar y=\(String(format: "%.0f", theirTop))"
+          + (ours.map { "   funkybar y=\(String(format: "%.0f", $0))"
+                        + (abs($0 - theirTop) < 0.5 ? "" : "   <- differs by \(String(format: "%+.0f", $0 - theirTop))pt") }
+             ?? "   funkybar not running"))
+}
 
 guard !sketchy.isEmpty else {
     print("no sketchybar windows found on that strip. Is it running?")
