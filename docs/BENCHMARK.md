@@ -1,5 +1,36 @@
 # Benchmarks
 
+## Target versus current
+
+Measured 2026-08-09 with funkybar running alone under launchd as the only bar,
+sampled over 180s with startup excluded.
+
+| | SketchyBar | Target | Current | Met |
+| --- | --- | --- | --- | --- |
+| Sustained CPU | 2.3% of one P-core | < 0.05% | **0.167%** | no, 14x better but 3x off |
+| Process spawns | ~190,000/day | 0 for built-ins | **0 per tick**, 1 persistent stream | yes |
+| Memory (phys_footprint) | 36 MB | < 20 MB | **13 MB** | yes |
+| Workspace switch | 147 ms, 7 forks | < 5 ms, 0 forks | **63-93 ms, 0 forks to repaint** | forks yes, latency no |
+
+Two of the four are met. The other two need reading carefully rather than as
+pass/fail:
+
+**CPU is 0.167%, against a 0.05% target.** That is 14x better than the 2.3% it
+replaces, and the gap is understood rather than mysterious: the `ports` scan runs
+every 5s at 2.7ms, push providers re-read their state file every 10s as a
+safety net, and AppKit's run loop has a floor. Raising the ports interval to 30s
+and skipping work while the bar is occluded should close most of it. Neither
+needs new architecture.
+
+**Workspace switch is 63-93 ms, against a 5 ms target.** The target was
+unrealistic and measured the wrong thing. Almost all of that time is AeroSpace
+performing the switch and emitting the event; it is the floor of the window
+manager, not of the bar. What the bar contributes is the repaint, which now
+happens directly from the event line with **zero subprocesses**, against
+SketchyBar's 7 forks and 7 IPC round trips. The fork count target was met; the
+latency figure was never the bar's to control.
+
+
 All figures measured on this machine: Apple M5 Max, macOS 26.6 (25G72), on AC
 power, with the same bar contents on both sides of the comparison.
 
