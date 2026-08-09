@@ -113,7 +113,7 @@ let tomlStringTests = Suite("TOML strings") { s in
     }
 
     s.test("preserves nerd font glyphs verbatim") { t in
-        // The actual icons from the user's sketchybarrc.
+        // Private-use codepoints, the range nerd fonts live in.
         let table = try parse("icon = \"\u{f099e}\"\nalt = \"\u{f0999}\"\n")
         t.expectEqual(string(table, "icon"), "\u{f099e}")
         t.expectEqual(string(table, "alt"), "\u{f0999}")
@@ -142,12 +142,12 @@ let tomlCollectionTests = Suite("TOML collections") { s in
     s.test("arrays span lines and tolerate comments and a trailing comma") { t in
         let source = """
         watch = [
-            "proc-a",     # a chain sim
-            "proc-b",
+            "first",     # a comment
+            "second",
         ]
         """
         let a = try t.require(array(try parse(source), "watch"))
-        t.expectEqual(a.map(\.value), [.string("proc-a"), .string("proc-b")])
+        t.expectEqual(a.map(\.value), [.string("first"), .string("second")])
     }
 
     s.test("parses nested arrays") { t in
@@ -401,6 +401,7 @@ let diagnosticRenderingTests = Suite("Diagnostic rendering") { s in
 }
 
 let tomlSuites: [Suite] = [
+    tomlRobustnessTests,
     tomlScalarTests,
     tomlStringTests,
     tomlCollectionTests,
@@ -410,3 +411,60 @@ let tomlSuites: [Suite] = [
     tomlErrorTests,
     diagnosticRenderingTests,
 ]
+
+// MARK: - Robustness
+
+// A malformed config must never take the daemon down. Each of these aborted
+// the process before: three by stack overflow through unbounded recursion, one
+// by a non-failable Int conversion trapping out of range.
+
+let tomlRobustnessTests = Suite("TOML robustness") { s in
+
+    s.test("deeply nested arrays are rejected, not fatal") { t in
+        let source = "a = " + String(repeating: "[", count: 5000) + String(repeating: "]", count: 5000)
+        t.expectContains(try firstDiagnostic(t, source).message, "nested more than")
+    }
+
+    s.test("deeply nested inline tables are rejected, not fatal") { t in
+        let source = "a = " + String(repeating: "{b=", count: 6000) + "1" + String(repeating: "}", count: 6000)
+        t.expectContains(try firstDiagnostic(t, source).message, "nested more than")
+    }
+
+    s.test("a very long dotted key is rejected, not fatal") { t in
+        // A separate path from the two above: this one recursed in freeze().
+        let source = (0 ..< 30_000).map { "k\($0)" }.joined(separator: ".") + " = 1"
+        t.expectContains(try firstDiagnostic(t, source).message, "nested more than")
+    }
+
+    s.test("ordinary nesting still parses") { t in
+        // The cap must not reject anything a real config would contain.
+        let source = "a = " + String(repeating: "[", count: 32) + String(repeating: "]", count: 32)
+        t.expectNoThrow { try TOMLParser.parse(source) }
+        t.expectNoThrow { try TOMLParser.parse("a.b.c.d.e.f.g.h = 1") }
+    }
+
+    s.test("Int.min parses, which sign-stripping used to reject") { t in
+        // The magnitude of Int.min does not fit a signed Int, so parsing the
+        // digits signed after stripping "-" failed on a legal literal.
+        let table = try parse("a = -9223372036854775808\nb = 9223372036854775807\n")
+        t.expectEqual(integer(table, "a"), Int.min)
+        t.expectEqual(integer(table, "b"), Int.max)
+    }
+
+    s.test("an out-of-range integer is an error, not a wrong number") { t in
+        t.expectContains(try firstDiagnostic(t, "a = 99999999999999999999999\n").message,
+                         "not a valid value")
+    }
+
+    s.test("a float too large for Int is reported, not trapped") { t in
+        // Int(Double) is non-failable and traps; `max_chars = 1e20` aborted.
+        let outcome = ConfigDecoder.decode(try TOMLParser.parse("""
+        [[item]]
+        id = "x"
+        [item.label]
+        text = "hi"
+        max_chars = 1e20
+        """))
+        t.expectContains(try t.require(outcome.diagnostics.errors.first).message, "too large")
+    }
+}

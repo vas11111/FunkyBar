@@ -1,7 +1,7 @@
 # funkybar
 #
-# A direct port of the sketchybarrc in dotfiles/sketchybar, with the shell
-# plugins replaced by native providers.
+# Copy to ~/.config/funkybar/funkybar.toml and edit. Nothing here is required;
+# every item is optional and the bar renders whatever you declare.
 #
 # Two substitution syntaxes, deliberately distinct:
 #   $name      a theme token, substituted once at load. Must be the whole value.
@@ -80,9 +80,9 @@ height        = 24
 # LEFT
 # ==============================================================================
 
-# One item per AeroSpace workspace. `repeat = "workspace"` is expanded at
-# runtime from what the provider reports, so a workspace that appears or
-# empties is reflected without a reload.
+# One item per AeroSpace workspace. `repeat = "workspace"` expands at runtime
+# from what the provider reports, so a workspace that appears or empties is
+# reflected without a reload. Delete this group if you do not use AeroSpace.
 [[group]]
 id       = "workspaces_pill"
 position = "left"
@@ -151,13 +151,13 @@ margin   = { left = 8, right = 3 }
 # ==============================================================================
 # RIGHT, declared in visual left-to-right order
 #
-# Upstream inserts `right` items rightmost-first, which is why the sketchybarrc
-# has to declare clock, battery, meter, status to get this order. Here the
-# order you write is the order you see.
+# SketchyBar inserts `right` items rightmost-first, so a sketchybarrc has to
+# declare that side backwards. Here the order you write is the order you see.
 # ==============================================================================
 
-# Replaces ports.sh: no lsof, no pgrep, no python3. Listening sockets are
-# read in-process via proc_pidinfo.
+# Listening dev ports, read in-process via proc_pidinfo rather than shelling
+# out to lsof. Click for a popup listing each port and process; a row with a
+# ✕ kills what it names.
 [[item]]
 id       = "ports"
 position = "right"
@@ -169,8 +169,9 @@ icon     = "󰒍"
 
   [item.provider]
   kind  = "ports"
-  ports = [3000, 3001, 5173, 8080, 8081, 8082, 8083, 8084]
-  watch = ["proc-a", "proc-b"]
+  ports = [3000, 3001, 5173, 8080]
+  # Processes to report by name, whatever port they use.
+  watch = []
 
   [item.popup]
   on      = "click"
@@ -197,125 +198,7 @@ icon     = "󰒍"
   [item.states.idle]
   color = "$idle"
 
-# Replaces status.sh and its safety poll. StatusApp.app pushes state over the socket;
-# the connection itself is the liveness signal.
-[[item]]
-id       = "status"
-position = "right"
-margin   = { left = 3, right = 6 }
-
-  [item.provider]
-  kind      = "push"
-  channel   = "status"
-  seed_file = "~/.local/state/status-state"
-
-  # StatusApp.app does not toggle via a flag: it watches ~/.local/state/status-command.
-  # This mirrors vpn_click.sh, including its wedge recovery, since a toggle
-  # that silently does nothing is worse than no button.
-  [item.provider.commands]
-  settings = "/Applications/StatusApp.app/Contents/MacOS/STATUS --settings"
-  toggle = """
-    if ! pgrep -f 'StatusApp.app/Contents/MacOS/STATUS' >/dev/null 2>&1; then
-      open /Applications/StatusApp.app; exit 0
-    fi
-    before=$(cat ~/.local/state/status-state 2>/dev/null || echo OFF)
-    mkdir -p ~/.local/state
-    echo toggle > ~/.local/state/status-command
-    for _ in 1 2 3 4 5 6; do
-      sleep 0.5
-      [ "$(cat ~/.local/state/status-state 2>/dev/null)" != "$before" ] && exit 0
-    done
-    killall -9 STATUS 2>/dev/null
-    networksetup -setsocksfirewallproxystate Wi-Fi off 2>/dev/null
-    echo OFF > ~/.local/state/status-state
-    rm -f ~/.local/state/status-command
-    sleep 1
-    open /Applications/StatusApp.app
-    """
-
-  [item.on_click]
-  left  = "status:toggle"
-  right = "status:settings"
-
-  [item.states.ON]
-  icon  = "󰦝"
-  label = "STATUS"
-  color = "$ok"
-
-  [item.states.CONNECTING]
-  icon  = "󰦝"
-  label = "…"
-  color = "$warn"
-
-  [item.states.ERROR]
-  icon  = "󰦝"
-  label = "ERR"
-  color = "$error"
-
-  [item.states.OFF]
-  icon  = "󰦞"
-  label = "OFF"
-  color = "$idle"
-
-[[group]]
-id       = "meters_pill"
-position = "right"
-style    = "$pill"
-# sketchybarrc widens the outer gap on the end coins with
-# `meter_a padding_left=6` and `meter_c padding_right=6`. Group
-# padding says the same thing once instead of twice, and survives the coin
-# list changing.
-padding  = { left = 3, right = 3 }
-
-  [[group.item]]
-  id       = "meter"
-  repeat   = ["a", "b", "c"]
-
-    [group.item.on_click]
-    left  = "meter:refresh"
-    right = "meter:copy"
-
-    [group.item.provider]
-    kind           = "push"
-    channel        = "meter"
-    seed_file      = "~/.local/state/meter"
-    seed_keys      = ["a", "b", "c"]
-    seed_field     = "price"
-
-      # Ports meter_click.sh: left refreshes, right copies to the clipboard,
-      # and a click while the app is closed launches it.
-      [group.item.provider.commands]
-      refresh = """
-        if pgrep -f 'ExampleApp.app/Contents/MacOS/ExampleApp' >/dev/null 2>&1; then
-          /Applications/ExampleApp.app/Contents/MacOS/ExampleApp --refresh
-        else
-          open /Applications/ExampleApp.app
-        fi
-        """
-      copy = """
-        if pgrep -f 'ExampleApp.app/Contents/MacOS/ExampleApp' >/dev/null 2>&1; then
-          /Applications/ExampleApp.app/Contents/MacOS/ExampleApp --copy
-        else
-          open /Applications/ExampleApp.app
-        fi
-        """
-
-    [group.item.icon]
-    drawing = false
-
-    [group.item.label]
-    text    = "${price}"
-    padding = { left = 20, right = 8 }
-
-    [group.item.style]
-    color         = "#00000000"
-    border_width  = 0
-
-    [group.item.style.image]
-    path  = "~/.config/funkybar/icons/meter/{repeat}.png"
-    scale = 0.38
-
-# Event-driven through IOPSNotificationCreateRunLoopSource. No polling, no pmset.
+# Event-driven through IOPSNotificationCreateRunLoopSource: no polling, no pmset.
 [[item]]
 id       = "battery"
 position = "right"
@@ -347,7 +230,49 @@ position = "right"
 
   [item.provider]
   kind = "clock"
-  # One timer aligned to the minute boundary, shared with every other
-  # interval provider, instead of a 10-second poll that forks three processes.
+  # One timer aligned to the minute boundary, shared with every other interval
+  # provider, rather than a fast poll that forks a process each tick.
   time = "HH:mm"
   date = "EEE dd"
+
+# ==============================================================================
+# Wiring your own applications
+# ==============================================================================
+#
+# A `push` provider reads state another program writes, and watches the file so
+# updates land immediately. The other program needs no changes beyond the file
+# it already writes.
+#
+#   [[item]]
+#   id       = "myapp"
+#   position = "right"
+#
+#     [item.provider]
+#     kind      = "push"
+#     channel   = "myapp"
+#     seed_file = "~/.local/state/myapp-status"
+#
+#     # Named commands a click can invoke.
+#     [item.provider.commands]
+#     toggle = "echo toggle > ~/.local/state/myapp-command"
+#
+#     [item.on_click]
+#     left = "myapp:toggle"
+#
+#     # States pick icon, label and colour from the provider's `state` field.
+#     [item.states.ON]
+#     icon  = "\u{f099d}"
+#     label = "ON"
+#     color = "$ok"
+#
+#     [item.states.OFF]
+#     icon  = "\u{f099e}"
+#     label = "OFF"
+#     color = "$idle"
+#
+# For a file holding several values, split it across repeated items:
+#
+#     seed_file  = "~/.local/state/prices"   # e.g. "75.85 1916.11 64943"
+#     seed_keys  = ["a", "b", "c"]     # positional, one per clone
+#     seed_field = "price"
+#     # then on the item: repeat = ["a", "b", "c"] and text = "${price}"

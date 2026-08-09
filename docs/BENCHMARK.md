@@ -54,7 +54,7 @@ by a test that opens a real listening socket and finds it.
 The running bar reports:
 
 ```
-providers: 7 (battery, clock, meter, ports, front_app, space, status)
+providers: 7 (battery, clock, front_app, ports, space, and two push items)
 timers:    4 on a 5.0s shared tick
 ```
 

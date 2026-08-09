@@ -231,9 +231,9 @@ let layoutGroupTests = Suite("Layout groups") { s in
     }
 
     s.test("group padding stacks on top of child margins") { t in
-        // How the coin pill reproduces sketchybar's `meter_a
-        // padding_left=6` without per-clone overrides: group padding 3 plus the
-        // inherited child margin 3 gives the same 6pt inset.
+        // How a group reproduces a per-item `padding_left=6` without per-clone
+        // overrides: group padding 3 plus the inherited child margin 3 gives
+        // the same 6pt inset.
         var only = makeItem("a", label: "AA")
         only.margin = Insets(leading: 3, trailing: 3)
 
@@ -390,10 +390,10 @@ let resolverTests = Suite("Item resolution") { s in
     }
 
     s.test("a repeat value is addressable as {repeat}") { t in
-        var config = ItemConfig(id: "meter.c")
-        config.repeatValue = "c"
+        var config = ItemConfig(id: "meter.b")
+        config.repeatValue = "b"
         config.label.template = Template("{repeat}")
-        t.expectEqual(ItemResolver.resolve(config).label, "c")
+        t.expectEqual(ItemResolver.resolve(config).label, "b")
     }
 }
 
@@ -491,13 +491,8 @@ let layoutIntegrationTests = Suite("Layout integration") { s in
             values: [
                 "clock": ["time": "09:41", "date": "Fri 08"],
                 "front_app": ["name": "Ghostty"],
-                "battery": ["percent": "80", "state": "charging"],
-                "ports": ["state": "idle"],
-                "status": ["state": "OFF"],
-                "meter": ["price": "0"],
-                "meter.c": ["price": "97210"],
-                "meter.b": ["price": "3480"],
-                "meter.a": ["price": "184"],
+                "battery": ["percent": "80", "state": "charging", "icon": "B"],
+                "ports": ["state": "idle", "label": "IDLE"],
                 "space": ["state": "inactive"],
                 "space.2": ["state": "active"],
             ],
@@ -524,7 +519,7 @@ let layoutIntegrationTests = Suite("Layout integration") { s in
         )
 
         // Right side reads ports, status, coins, battery, clock, left to right.
-        let order = ["ports", "status", "meters_pill", "battery", "clock"]
+        let order = ["ports", "battery", "clock"]
         var lastX = -Double.infinity
         for id in order {
             let x = result.item(id)?.frame.minX ?? result.group(id)?.frame.minX

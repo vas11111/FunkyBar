@@ -377,7 +377,7 @@ public struct Config: Equatable, Sendable {
     ///
     /// Declaration order is visual order on both sides. Upstream inserts
     /// `right` items rightmost-first, which is why the user's sketchybarrc has
-    /// to declare clock, battery, meter, status to get the opposite result.
+    /// to declare its right side backwards to get the intended order.
     public func nodes(at position: Position) -> [LayoutNode] {
         nodes.filter { $0.position == position }
     }

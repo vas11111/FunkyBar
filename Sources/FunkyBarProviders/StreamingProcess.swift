@@ -192,7 +192,7 @@ public final class StreamingProcess: @unchecked Sendable {
 /// Watches a file and reports every change.
 ///
 /// Watches the *containing directory*, not the file. Apps that write state
-/// atomically (temp file, delete, rename, which is what StatusApp.app does) destroy
+/// atomically (temp file, delete, rename) destroy
 /// the inode on every write, so a watch bound to the file itself dies after
 /// the first change and any recovery races the gap where the file does not
 /// exist. A directory watch has no such gap.

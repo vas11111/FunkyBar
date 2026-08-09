@@ -47,8 +47,10 @@ protocol. None of it requires disabling SIP.
   budget, milestones, risks
 - [docs/ISSUE-TRIAGE.md](docs/ISSUE-TRIAGE.md) - all 57 open upstream issues,
   each mapped to a disposition
-- [funkybar.toml.example](funkybar.toml.example) - a full port of the current
-  sketchybarrc, decoded end-to-end by the test suite
+- [funkybar.toml.example](funkybar.toml.example) - a generic starting config,
+  decoded end-to-end by the test suite. Copy it to
+  `~/.config/funkybar/funkybar.toml` and edit; personal setup stays out of
+  this repo
 - [CONTRIBUTING.md](CONTRIBUTING.md) - commit convention and branching
 
 ## Requirements

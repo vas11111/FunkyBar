@@ -26,8 +26,9 @@ swift run funkybar-test            # all
 swift run funkybar-test "ports"    # filtered
 ```
 
-`funkybar.toml.example` is a full port of the current `sketchybarrc`. It is
-decoded end-to-end by the suite, so it cannot silently rot.
+`funkybar.toml.example` is a generic starting config, decoded end-to-end by the
+suite so it cannot silently rot. Personal setup belongs in
+`~/.config/funkybar/funkybar.toml`, not in this repo.
 
 ## Built and tested
 
@@ -94,8 +95,8 @@ silently and doing nothing.
 - ~~Popups.~~ **Built.** The ports popup draws, lists live ports and
   watched processes, and its rows kill what they name.
 - **Socket IPC and the `funkybar` CLI.** `push` providers seed from a file but
-  have nothing to receive from yet, so `status` and `meter` show their seeded
-  or empty state. This is the next piece of work.
+  have nothing to receive from yet, so push-driven items show their
+  seeded or empty state. This is the next piece of work.
 - **`command` provider.** `ProcessRunner` underneath it is built and tested;
   the provider wrapper is not wired.
 - **M3 parity items**: graphs, sliders, `alias` menu-bar mirroring, media,

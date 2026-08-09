@@ -160,10 +160,9 @@ public final class AeroSpaceProvider: Provider {
 
 /// State written by another application.
 ///
-/// Watches the state file rather than reading it once. StatusApp.app and
-/// ExampleApp.app already maintain these files, so this picks up a toggle or a
-/// price tick the moment it lands, with no change to either app and no socket
-/// protocol. Reading once at startup meant the bar showed whatever was true
+/// Watches the state file rather than reading it once. An application that
+/// already maintains a status file needs no changes: a write lands on the bar
+/// immediately. Reading once at startup meant the bar showed whatever was true
 /// when it launched and never moved again.
 @MainActor
 public final class PushProvider: Provider {
@@ -257,9 +256,9 @@ public final class PushProvider: Provider {
 
     /// Reads the current contents of the state file.
     ///
-    /// Two shapes are supported. A bare scalar (`status-state` holds `OFF`)
-    /// becomes `state`/`value`. A delimited record (`meter` holds
-    /// `75.85 1916.11 64943`) is split and mapped positionally onto
+    /// Two shapes are supported. A bare scalar (a status file holding `OFF`)
+    /// becomes `state`/`value`. A delimited record (a file holding
+    /// `1.5 2.5 3.5`) is split and mapped positionally onto
     /// `seed_keys`, so each clone of a repeated item gets its own field.
     private func seed() {
         guard let seedFile,

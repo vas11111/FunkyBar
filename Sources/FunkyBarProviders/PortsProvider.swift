@@ -4,11 +4,10 @@ import FunkyBarCore
 
 /// Listening TCP ports and watched processes, read in-process.
 ///
-/// This is the headline efficiency case. `ports.sh` shells out to
-/// `lsof -nP -iTCP:... -sTCP:LISTEN`, plus two `pgrep`s, an `awk`, a `sort` and
-/// (when the popup is open) a `python3` to parse JSON, twelve times a minute.
-/// Measured: **94 ms of CPU per invocation, 1.88% of a P-core sustained, about
-/// 82% of everything the current bar costs.**
+/// The headline efficiency case. A shell equivalent runs
+/// `lsof -nP -iTCP:... -sTCP:LISTEN` plus `pgrep`, `awk` and `sort` on every
+/// tick: measured at 94 ms of CPU per invocation, which at a 5s interval is
+/// 1.88% of a performance core, sustained.
 ///
 /// `lsof` is slow because it stats every descriptor of every process and then
 /// filters. Asking the kernel only for socket descriptors and filtering on
@@ -68,10 +67,9 @@ public final class PortsProvider: Provider {
 
     /// Popup contents: watched processes first, then every listening port.
     ///
-    /// Replaces ports_click.sh, which rebuilt the rows by removing and
-    /// re-adding sketchybar items on every open, and ports_kill.sh, which
-    /// shelled out to lsof again to find what to kill. The scan already knows
-    /// the pid, so a row carries it and the kill needs no second lookup.
+    /// SketchyBar rebuilds popup rows by removing and re-adding items on
+    /// every open, and a kill script would shell out to lsof again to find its
+    /// target. The scan already knows the pid, so a row carries it.
     private func rows(for scan: Scan) -> [PopupRow] {
         var out: [PopupRow] = []
 
@@ -104,8 +102,8 @@ public final class PortsProvider: Provider {
 
     /// `kill:name:<proc>` or `kill:pid:<pid>`, sent by a popup row click.
     ///
-    /// TERM first, KILL if it survives, matching ports_kill.sh, but without
-    /// re-deriving the target: the row already carries it.
+    /// TERM first, KILL if it survives, without re-deriving the target: the
+    /// row already carries it.
     public func handle(command: String) {
         let parts = command.split(separator: ":").map(String.init)
         guard parts.count == 3, parts[0] == "kill" else { return }

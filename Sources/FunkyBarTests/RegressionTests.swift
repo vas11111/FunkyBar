@@ -30,18 +30,15 @@ let glyphRegressionTests = Suite("Glyph integrity") { s in
     // through as a stray ASCII character, so `U+F099E` became `U+F099` + "E".
     // The bar rendered a wrong glyph followed by a letter and nothing caught it.
     let expected: [(item: String, state: String?, codepoint: UInt32, name: String)] = [
-        ("ports", nil,     0xF048D, "network"),
-        ("status", "ON",         0xF099D, "shield-check"),
-        ("status", "CONNECTING", 0xF099D, "shield-check"),
-        ("status", "ERROR",      0xF099D, "shield-check"),
-        ("status", "OFF",        0xF099E, "shield-off"),
+        ("ports", nil,      0xF048D, "network"),
+        ("toggle", "ON",    0xF099D, "shield-check"),
+        ("toggle", "OFF",   0xF099E, "shield-off"),
     ]
 
     for entry in expected {
         let label = entry.state.map { "\(entry.item).\($0)" } ?? entry.item
         s.test("\(label) icon is exactly U+\(String(entry.codepoint, radix: 16, uppercase: true))") { t in
-            let config = try exampleConfig()
-            let target = try t.require(item(config, entry.item), "no item '\(entry.item)'")
+            let target = try t.require(try Fixture.item(entry.item), "no item '\(entry.item)'")
 
             let text: String
             if let state = entry.state {
@@ -59,8 +56,7 @@ let glyphRegressionTests = Suite("Glyph integrity") { s in
     }
 
     s.test("the battery ramp is five single-scalar glyphs, low to high") { t in
-        let config = try exampleConfig()
-        let battery = try t.require(item(config, "battery"))
+        let battery = try t.require(try Fixture.item("battery"))
         let options = try t.require(battery.provider?.options)
 
         guard case .array(let nodes)? = options["ramp"]?.value else {
@@ -86,10 +82,10 @@ let glyphRegressionTests = Suite("Glyph integrity") { s in
         t.expectEqual(charging.unicodeScalars.first?.value, 0xF0084)
     }
 
-    s.test("no icon or label in the example config carries a stray ASCII tail") { t in
+    s.test("no icon or label carries a stray ASCII tail") { t in
         // The general shape of the corruption: a private-use scalar immediately
         // followed by an ASCII character. Nothing in this config legitimately
-        // does that.
+        // does that. Checked across both the fixture and the shipped example.
         let config = try exampleConfig()
 
         func check(_ text: String, _ where_: String) {
@@ -105,7 +101,7 @@ let glyphRegressionTests = Suite("Glyph integrity") { s in
             }
         }
 
-        for target in config.allItems {
+        for target in (config.allItems + (try Fixture.config()).allItems) {
             check(target.icon.template.source, "\(target.id).icon")
             check(target.label.template.source, "\(target.id).label")
             for (name, state) in target.states {
@@ -118,18 +114,18 @@ let glyphRegressionTests = Suite("Glyph integrity") { s in
 
 let renderRegressionTests = Suite("Render regressions") { s in
 
-    s.test("ports renders a label, not just an icon") { t in
+    s.test("a ports item renders a label, not just an icon") { t in
         // The ports provider emits a `label` field. Nothing consumed it, so the
-        // item drew an icon and no text where sketchybar shows "1P".
-        let ports = try t.require(item(try exampleConfig(), "ports"))
-        t.expect(!ports.label.template.source.isEmpty, "ports has no label template")
+        // item drew an icon and no text at all.
+        let ports = try t.require(try Fixture.item("ports"))
+        t.expect(!ports.label.template.source.isEmpty, "no label template")
         t.expectEqual(ports.label.template.fields.contains("label"), true)
     }
 
     s.test("a transparent fill with an image still counts as visible") { t in
-        // The coin pills set drawing = false to hide the fill. That suppressed
-        // the whole background layer, and the image rides on it, so the coin
-        // icons never drew.
+        // An item set drawing = false to hide its fill. That suppressed the
+        // whole background layer, and the image rides on it, so the artwork
+        // never drew.
         var style = StyleSpec()
         style.color = .clear
         style.borderWidth = 0
@@ -141,16 +137,16 @@ let renderRegressionTests = Suite("Render regressions") { s in
     }
 
     s.test("image paths substitute provider fields") { t in
-        // `icons/{repeat}.png` was stored as a literal String, so every coin
+        // `icons/{repeat}.png` was stored as a literal String, so every clone
         // asked for a file called "{repeat}.png".
-        var config = ItemConfig(id: "meter.c")
-        config.repeatValue = "c"
+        var config = ItemConfig(id: "meter.b")
+        config.repeatValue = "b"
         var style = StyleSpec()
         style.image = ImageSpec(path: Template("/icons/{repeat}.png"))
         config.style = style
 
         let resolved = ItemResolver.resolve(config)
-        t.expectEqual(resolved.style.image?.resolvedPath, "/icons/btc.png")
+        t.expectEqual(resolved.style.image?.resolvedPath, "/icons/b.png")
     }
 
     s.test("image paths expand a leading tilde after substitution") { t in
@@ -164,36 +160,32 @@ let renderRegressionTests = Suite("Render regressions") { s in
         t.expectContains(resolved, "/icons/x.png")
     }
 
-    s.test("the coin pills declare their real on-screen order") { t in
-        // Upstream declared btc/eth/sol and relied on right-side reverse
-        // insertion. Here declaration order is visual order, so the same list
-        // would come out backwards.
-        let config = try exampleConfig()
-        var coins: [String] = []
-        for case .group(let group) in config.nodes where group.id == "meters_pill" {
-            coins = group.items.compactMap(\.repeatValue)
+    s.test("a repeated group declares its real on-screen order") { t in
+        // Upstream relied on right-side reverse insertion, so the same list
+        // would come out backwards. Here declaration order is visual order.
+        var values: [String] = []
+        for case .group(let group) in (try Fixture.config()).nodes where group.id == "meters" {
+            values = group.items.compactMap(\.repeatValue)
         }
-        t.expectEqual(coins, ["a", "b", "c"])
+        t.expectEqual(values, ["a", "b", "c"])
     }
 
-    s.test("every coin has artwork on disk under the configured path") { t in
-        let config = try exampleConfig()
-        var checked = 0
-        for case .group(let group) in config.nodes where group.id == "meters_pill" {
-            for coin in group.items {
-                guard coin.style.image != nil else {
-                    t.fail("\(coin.id) has no image")
+    s.test("each repeated item resolves its own artwork path") { t in
+        var resolved: [String] = []
+        for case .group(let group) in (try Fixture.config()).nodes where group.id == "meters" {
+            for clone in group.items {
+                guard clone.style.image != nil else {
+                    t.fail("\(clone.id) has no image")
                     continue
                 }
-                let path = try t.require(ItemResolver.resolve(coin).style.image?.resolvedPath)
-                t.expect(
-                    FileManager.default.fileExists(atPath: path),
-                    "missing artwork for \(coin.id): \(path)"
-                )
-                checked += 1
+                resolved.append(try t.require(ItemResolver.resolve(clone).style.image?.resolvedPath))
             }
         }
-        t.expectEqual(checked, 3)
+        t.expectEqual(resolved, [
+            "/tmp/funkybar-icons/a.png",
+            "/tmp/funkybar-icons/b.png",
+            "/tmp/funkybar-icons/c.png",
+        ])
     }
 }
 
@@ -202,29 +194,28 @@ let seedRegressionTests = Suite("Seed file regressions") { s in
     s.test("battery consumes the provider's icon field") { t in
         // [item.icon] set only padding, so the ramp glyph the provider emits
         // had no template to land in and the battery drew no icon at all.
-        let battery = try t.require(item(try exampleConfig(), "battery"))
+        let battery = try t.require(try Fixture.item("battery"))
         t.expectEqual(battery.icon.template.fields.contains("icon"), true,
                       "battery icon template is \(battery.icon.template.source.debugDescription)")
     }
 
-    s.test("the meter seed splits on whitespace by default") { t in
-        // The state file holds "75.85 1916.11 64943", exactly what
-        // `read -r FSOL FETH FBTC < file` expects. An earlier version assumed
-        // a middle-dot separator, so the whole line landed in the first coin.
-        let config = try exampleConfig()
+    s.test("a multi-value seed splits on whitespace by default") { t in
+        // A state file holding "1 2 3" is exactly what `read -r a b c < file`
+        // expects. An earlier version assumed a middle-dot separator, so the
+        // whole line landed in the first clone.
         var options: TOMLTable?
-        for case .group(let group) in config.nodes where group.id == "meters_pill" {
+        for case .group(let group) in (try Fixture.config()).nodes where group.id == "meters" {
             options = group.items.first?.provider?.options
         }
-        let opts = try t.require(options, "meter has no provider options")
+        let opts = try t.require(options, "no provider options")
 
         guard case .array(let keys)? = opts["seed_keys"]?.value else {
-            t.fail("meter has no seed_keys")
+            t.fail("no seed_keys")
             return
         }
         let names: [String] = keys.compactMap { if case .string(let k) = $0.value { k } else { nil } }
         t.expectEqual(names, ["a", "b", "c"], "seed order must match declaration order")
-        t.expectNil(opts["seed_separator"], "whitespace is the default; an explicit separator is wrong here")
+        t.expectNil(opts["seed_separator"], "whitespace is the default")
     }
 }
 
@@ -262,7 +253,7 @@ let popupAlignmentTests = Suite("Popup row alignment") { s in
         // The difference from sketchybar's popup is deliberate, so the config
         // says so out loud; an unexplained difference is indistinguishable
         // from a bug.
-        let popup = try t.require(item(try exampleConfig(), "ports")?.popup)
+        let popup = try t.require(try Fixture.item("ports")?.popup)
         t.expectEqual(popup.rowAlignment, .columns)
     }
 }
@@ -278,33 +269,28 @@ let regressionSuites: [Suite] = [
 
 let providerCommandTests = Suite("Provider commands") { s in
 
-    s.test("the status item binds a toggle command the provider can find") { t in
+    s.test("an item binds a command the provider can find") { t in
         // The click and the action both resolved correctly in the event trace,
         // so a dead button means the command never reached the provider.
-        let config = try exampleConfig()
-        let status = try t.require(item(config, "status"))
-        let binding = try t.require(status.provider, "status has no provider")
+        let status = try t.require(try Fixture.item("toggle"))
+        let binding = try t.require(status.provider, "no provider")
 
         guard case .table(let commands)? = binding.options["commands"]?.value else {
             t.fail("provider options have no [commands] table; keys: \(binding.options.keys)")
             return
         }
-        t.expect(commands["toggle"] != nil, "no toggle command; have \(commands.keys)")
-        t.expect(commands["settings"] != nil, "no settings command; have \(commands.keys)")
+        t.expect(commands["flip"] != nil, "no flip command; have \(commands.keys)")
 
-        guard case .string(let toggle)? = commands["toggle"]?.value else {
-            t.fail("toggle is not a string")
+        guard case .string(let flip)? = commands["flip"]?.value else {
+            t.fail("flip is not a string")
             return
         }
-        // StatusApp.app watches this file; the --toggle flag it does not use.
-        t.expectContains(toggle, "status-command")
-        t.expect(!toggle.contains("--toggle"), "should not call the flag the app ignores")
+        t.expectContains(flip, "funkybar-test-command")
     }
 
     s.test("the left click resolves to that provider command") { t in
-        let status = try t.require(item(try exampleConfig(), "status"))
-        t.expectEqual(status.actions[.left], .provider(name: "status", command: "toggle"))
-        t.expectEqual(status.actions[.right], .provider(name: "status", command: "settings"))
+        let item = try t.require(try Fixture.item("toggle"))
+        t.expectEqual(item.actions[.left], .provider(name: "toggle", command: "flip"))
     }
 }
 
@@ -354,11 +340,11 @@ let injectionTests = Suite("Injection") { s in
     }
 
     s.test("an ordinary image path still resolves") { t in
-        var config = ItemConfig(id: "meter.c")
-        config.repeatValue = "c"
+        var config = ItemConfig(id: "meter.b")
+        config.repeatValue = "b"
         var style = StyleSpec()
         style.image = ImageSpec(path: Template("/icons/{repeat}.png"))
         config.style = style
-        t.expectEqual(ItemResolver.resolve(config).style.image?.resolvedPath, "/icons/btc.png")
+        t.expectEqual(ItemResolver.resolve(config).style.image?.resolvedPath, "/icons/b.png")
     }
 }

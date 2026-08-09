@@ -103,9 +103,9 @@ let portsProviderTests = Suite("Ports provider") { s in
         )
     }
 
-    s.test("beats lsof by a wide margin on the user's real port list") { t in
-        let ports: Set<UInt16> = [3000, 3001, 5173, 8080, 8081, 8082, 8083, 8084]
-        let processes: Set<String> = ["proc-a", "proc-b"]
+    s.test("beats lsof by a wide margin on a realistic port list") { t in
+        let ports: Set<UInt16> = [3000, 3001, 5173, 8080, 8081, 8443, 9000, 9090]
+        let processes: Set<String> = ["node", "ruby"]
 
         // Warm the page cache so the first call does not carry setup cost.
         _ = PortsProvider.scan(ports: ports, processes: processes)
@@ -117,8 +117,8 @@ let portsProviderTests = Suite("Ports provider") { s in
         }
         let perScan = Date().timeIntervalSince(started) / Double(iterations) * 1000
 
-        // ports.sh measures 94ms per invocation. Anything near that would
-        // mean the in-process scan bought nothing.
+        // A shell equivalent measures 94ms per invocation. Anything near that
+        // would mean the in-process scan bought nothing.
         t.expect(perScan < 25, "scan took \(String(format: "%.1f", perScan))ms; lsof takes ~94ms")
         print("       ports scan: \(String(format: "%.2f", perScan))ms/call (lsof: ~94ms)")
     }

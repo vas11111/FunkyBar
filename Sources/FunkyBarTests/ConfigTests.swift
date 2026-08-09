@@ -317,7 +317,7 @@ let decoderTests = Suite("Config decoding") { s in
         id = "ports"
         position = "right"
         [[group]]
-        id = "coins"
+        id = "meters"
         position = "right"
         [[group.item]]
         id = "c"
@@ -325,20 +325,20 @@ let decoderTests = Suite("Config decoding") { s in
         id = "clock"
         position = "right"
         """)
-        t.expectEqual(outcome.config.nodes(at: .right).map(\.id), ["ports", "coins", "clock"])
+        t.expectEqual(outcome.config.nodes(at: .right).map(\.id), ["ports", "meters", "clock"])
     }
 
     s.test("expands a fixed repeat into one item per value") { t in
         let outcome = try decode("""
         [[group]]
-        id = "coins"
+        id = "meters"
         [[group.item]]
         id = "meter"
-        repeat = ["c", "b", "a"]
+        repeat = ["a", "b", "c"]
         """)
-        let g = try t.require(group(outcome, "coins"))
-        t.expectEqual(g.items.map(\.id), ["meter.c", "meter.b", "meter.a"])
-        t.expectEqual(g.items.map(\.repeatValue), ["c", "b", "a"])
+        let g = try t.require(group(outcome, "meters"))
+        t.expectEqual(g.items.map(\.id), ["meter.a", "meter.b", "meter.c"])
+        t.expectEqual(g.items.map(\.repeatValue), ["a", "b", "c"])
     }
 
     s.test("a dynamic repeat stays a single template for the runtime to expand") { t in
@@ -482,7 +482,7 @@ let exampleConfigTests = Suite("Example config") { s in
         }
     }
 
-    s.test("the example reproduces the current bar's layout") { t in
+    s.test("the shipped example decodes into a sane bar") { t in
         let url = packageRoot.appendingPathComponent("funkybar.toml.example")
         let source = try String(contentsOf: url, encoding: .utf8)
         let outcome = ConfigDecoder.decode(try TOMLParser.parse(source))
@@ -492,14 +492,9 @@ let exampleConfigTests = Suite("Example config") { s in
         t.expectEqual(config.bar.offset.y, 4)
         t.expectEqual(config.bar.color.isTransparent, true, "the bar itself is transparent; items are pills")
 
+        // Declaration order is visual order on both sides.
         t.expectEqual(config.nodes(at: .left).map(\.id), ["workspaces_pill", "app_pill"])
-        t.expectEqual(config.nodes(at: .right).map(\.id),
-                      ["ports", "status", "meters_pill", "battery", "clock"])
-
-        // The three coin pills are expanded at load; workspaces at runtime.
-        let coins = try t.require(group(outcome, "meters_pill"))
-        // Declaration order is visual order, so this is left-to-right on screen.
-        t.expectEqual(coins.items.map(\.repeatValue), ["a", "b", "c"])
+        t.expectEqual(config.nodes(at: .right).map(\.id), ["ports", "battery", "clock"])
 
         let workspaces = try t.require(group(outcome, "workspaces_pill"))
         t.expectEqual(workspaces.items.count, 1, "a dynamic repeat stays one template")
@@ -516,7 +511,6 @@ let exampleConfigTests = Suite("Example config") { s in
         t.expectEqual(bound["battery"], "battery")
         t.expectEqual(bound["front_app"], "frontApp")
         t.expectEqual(bound["ports"], "ports")
-        t.expectEqual(bound["status"], "push")
         t.expectEqual(bound["space"], "aerospace")
         // The chevron is decoration and correctly has none.
         t.expectEqual(bound["chevron"] ?? nil, nil)

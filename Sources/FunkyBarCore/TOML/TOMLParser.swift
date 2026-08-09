@@ -14,6 +14,14 @@ public struct TOMLParser {
     private var index: Int = 0
     private var line: Int = 1
     private var column: Int = 1
+    private var depth: Int = 0
+
+    /// Nesting cap for arrays and inline tables.
+    ///
+    /// `parseValue` and the collection parsers are mutually recursive, so deep
+    /// input overflows the stack and kills the process. No real config nests
+    /// anything like this far; the cap converts a crash into a diagnostic.
+    private static let maxDepth = 64
 
     private init(_ source: String) {
         // Normalise line endings so column arithmetic stays honest on CRLF files.
@@ -300,6 +308,12 @@ public struct TOMLParser {
             }
 
             path.append((key, start))
+            guard path.count <= Self.maxDepth else {
+                throw diagnostic(
+                    "key nested more than \(Self.maxDepth) levels deep",
+                    at: start
+                )
+            }
 
             skipInlineWhitespace()
             if peek() == "." {
@@ -337,6 +351,11 @@ public struct TOMLParser {
 
     private mutating func parseArray() throws -> TOMLNode {
         let start = location()
+        guard depth < Self.maxDepth else {
+            throw diagnostic("array nested more than \(Self.maxDepth) deep", at: start)
+        }
+        depth += 1
+        defer { depth -= 1 }
         advance() // '['
 
         var elements: [TOMLNode] = []
@@ -377,6 +396,11 @@ public struct TOMLParser {
 
     private mutating func parseInlineTable() throws -> TOMLNode {
         let start = location()
+        guard depth < Self.maxDepth else {
+            throw diagnostic("inline table nested more than \(Self.maxDepth) deep", at: start)
+        }
+        depth += 1
+        defer { depth -= 1 }
         advance() // '{'
 
         var table = TOMLTable(location: start)
@@ -606,8 +630,17 @@ public struct TOMLParser {
         else if text.hasPrefix("0b") { radix = 2; text.removeFirst(2) }
         else { radix = 10 }
 
-        guard !text.isEmpty, let magnitude = Int(text, radix: radix) else { return nil }
-        return sign * magnitude
+        guard !text.isEmpty else { return nil }
+        // Parse the magnitude unsigned: |Int.min| does not fit in a signed Int,
+        // so `-9223372036854775808` was rejected as invalid.
+        guard let magnitude = UInt64(text, radix: radix) else { return nil }
+        if sign < 0 {
+            if magnitude == UInt64(Int.max) + 1 { return Int.min }
+            guard magnitude <= UInt64(Int.max) else { return nil }
+            return -Int(magnitude)
+        }
+        guard magnitude <= UInt64(Int.max) else { return nil }
+        return Int(magnitude)
     }
 
     private func parseDouble(_ token: String) -> Double? {

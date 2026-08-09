@@ -154,7 +154,7 @@ guard !funky.isEmpty else {
 print("sketchybar: \(sketchy.count) item windows   funkybar: \(funky.count) frames\n")
 
 // Rank alignment is wrong when the two bars differ structurally: sketchybar
-// has a spacer item where funkybar uses a group margin, so one extra rect
+// may have a spacer item where funkybar uses a group margin, so one extra rect
 // shifts everything after it. Match greedily on nearest position and size
 // instead, and report what stayed unmatched rather than silently pairing it.
 struct Match {
@@ -293,9 +293,11 @@ func sketchybarQuery(_ name: String) -> [String: Any]? {
     return nil
 }
 
-/// funkybar uses `.` where sketchybarrc used `_` for repeated items.
+/// funkybar separates a repeated item from its value with `.` where a
+/// sketchybarrc conventionally uses `_`.
 func sketchybarName(for id: String) -> String {
-    id.replacingOccurrences(of: "meter.", with: "meter_")
+    guard let dot = id.lastIndex(of: ".") else { return id }
+    return id.replacingCharacters(in: dot ... dot, with: "_")
 }
 
 /// `0xaarrggbb` -> `#aarrggbb`, so the two sides are directly comparable.

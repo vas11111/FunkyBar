@@ -110,7 +110,7 @@ public struct ProcessRunner: Sendable {
 
         // Drain both pipes concurrently. Reading them in sequence deadlocks as
         // soon as the child fills the one we are not reading, which is the
-        // trap the INTEGRATION.md notes warn about.
+        // classic trap with two pipes.
         let group = DispatchGroup()
         var outData = Data()
         var errData = Data()

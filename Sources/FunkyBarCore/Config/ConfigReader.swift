@@ -92,6 +92,17 @@ public struct ConfigReader {
         case .integer(let value):
             return value
         case .double(let value) where value == value.rounded():
+            // Int(Double) is non-failable and traps out of range, so a config
+            // saying `max_chars = 1e20` would abort the daemon rather than
+            // report a problem.
+            guard value >= -9.2e18, value <= 9.2e18 else {
+                sink.error(
+                    "'\(label(key))' is too large to be a whole number",
+                    at: node.location,
+                    hint: "expected a value between \(Int.min) and \(Int.max)"
+                )
+                return nil
+            }
             return Int(value)
         default:
             mismatch(key, expected: "a whole number", node: node)

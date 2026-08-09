@@ -38,7 +38,7 @@ The architecture that matters:
 - **Config is an executable shell script** run once at startup; all dynamic
   behaviour is shelled out from there.
 
-### 1.2 Your setup
+### 1.2 The configuration measured
 
 `~/.config/sketchybar` is a symlink into `dotfiles/sketchybar`. It contains a
 217-line `sketchybarrc` and 15 bash plugins totalling 321 lines.
@@ -51,12 +51,12 @@ Items in play:
 | front app | `front_app_switched` event | 1 fork per switch |
 | clock | `update_freq=10` | 3 execs every 10s |
 | battery | `update_freq=120` + power events | 7 execs every 120s |
-| meter (3 pills) | `update_freq=60` + push event from ExampleApp.app | 2 execs each per minute |
-| status | `update_freq=30` + push event from StatusApp.app | 3 execs every 30s |
+| 3 push-driven pills | `update_freq=60` + a push event from an external app | 2 execs each per minute |
+| status toggle | `update_freq=30` + a push event from an external app | 3 execs every 30s |
 | ports | `update_freq=5` | 8 execs every 5s, including `lsof` and `python3` |
 
-Three brackets (`workspaces_pill`, `app_pill`, `meters_pill`), one popup
-(`ports`) built by regenerating item rows on every open, and a hand-rolled
+Three brackets (workspaces, front app, and a repeated group), one popup built
+by regenerating its item rows on every open, and a hand-rolled
 `mouse.exited.global` dismissal.
 
 ### 1.3 Measured cost (this machine, M5 Max, macOS 26.6)
@@ -72,15 +72,15 @@ Plugin scripts, benchmarked at 10 iterations each:
 
 | Script | CPU per run | Runs/min | Sustained |
 | --- | --- | --- | --- |
-| `ports.sh` | 94 ms | 12 | **1.88% of a core** |
-| `clock.sh` | 6 ms | 6 | 0.06% |
-| `meter.sh` x3 | 6 ms | 3 | 0.03% |
-| `status.sh` | 7 ms | 2 | 0.02% |
-| `battery.sh` | 18 ms | 0.5 | 0.02% |
-| `aerospace.sh` | 12 ms | per switch x7 | 147 ms latency per switch |
+| port scan (`lsof`) | 94 ms | 12 | **1.88% of a core** |
+| `clock` plugin | 6 ms | 6 | 0.06% |
+| push-based plugins x3 | 6 ms | 3 | 0.03% |
+| a status-file plugin | 7 ms | 2 | 0.02% |
+| `battery` plugin | 18 ms | 0.5 | 0.02% |
+| `workspace` plugin | 12 ms | per switch x7 | 147 ms latency per switch |
 
 **Totals: roughly 2.3% of one performance core burned continuously, and about
-130 process spawns per minute (190,000 per day).** `ports.sh` alone accounts
+130 process spawns per minute (190,000 per day).** The port-scanning plugin alone accounts
 for 82% of the CPU, almost all of it inside `lsof` walking every process's file
 descriptor table twelve times a minute.
 
@@ -222,7 +222,7 @@ conflates them, which is why `background.padding_left` silently overwrites
 `padding_left` (#796) and why your config carries this comment:
 
 ```
-# padding_left=6 because the meter bracket contributes no margin of its own
+# padding_left=6 because the bracket contributes no margin of its own
 # (brackets swallow their members' outer margins)
 ```
 
@@ -233,9 +233,9 @@ theirs. That comment becomes unnecessary.
 frames plus its insets. `background.height` becomes optional everywhere (#639).
 
 **Declaration order is visual order.** Upstream inserts `right` items
-rightmost-first, which is why your config declares clock, then battery, then
-meter, then status to get the opposite visual order. In funkybar, `position =
-"right"` items render left to right in declaration order.
+rightmost-first, which is why a sketchybarrc has to declare that side backwards
+to get the intended order. In funkybar, `position = "right"` items render left
+to right in declaration order.
 
 ---
 
@@ -262,20 +262,20 @@ enum UpdatePolicy {
 
 | Provider | Mechanism | Replaces |
 | --- | --- | --- |
-| `clock` | `DispatchSourceTimer` aligned to the minute boundary | `clock.sh` |
-| `battery` | `IOPSNotificationCreateRunLoopSource`, fully event-driven | `battery.sh` |
-| `cpu` | `host_processor_info` tick deltas | `cpu.sh` |
+| `clock` | `DispatchSourceTimer` aligned to the minute boundary | `clock` plugin |
+| `battery` | `IOPSNotificationCreateRunLoopSource`, fully event-driven | `battery` plugin |
+| `cpu` | `host_processor_info` tick deltas | `cpu` plugin |
 | `memory` | `host_statistics64` | new |
 | `network` | `getifaddrs` byte deltas + `NWPathMonitor` | new |
 | `disk` | `statfs` | new |
-| `frontApp` | `NSWorkspace.didActivateApplicationNotification` | `front_app.sh` |
-| `aerospace` | AeroSpace `exec-on-workspace-change` hook into our socket, one query per switch | `aerospace.sh` |
+| `frontApp` | `NSWorkspace.didActivateApplicationNotification` | `front app` plugin |
+| `aerospace` | AeroSpace `exec-on-workspace-change` hook into our socket, one query per switch | `workspace` plugin |
 | `spaces` | `SLSCopyManagedDisplaySpaces` + space-change notification | native spaces |
 | `windows` | `NSWorkspace` + accessibility observers | `app_windows` |
-| `volume` | CoreAudio `kAudioHardwareServiceDeviceProperty_VirtualMainVolume` listener | `volume.sh` |
+| `volume` | CoreAudio `kAudioHardwareServiceDeviceProperty_VirtualMainVolume` listener | `volume` plugin |
 | `wifi` | CoreWLAN + `NWPathMonitor` | wifi events |
 | `media` | MediaRemote listener with artwork decode | `media_change` |
-| `ports` | `proc_listpids` + `proc_pidinfo(PROC_PIDLISTFDS)` | `ports.sh` **(the big win)** |
+| `ports` | `proc_listpids` + `proc_pidinfo(PROC_PIDLISTFDS)` | `ports` plugin **(the big win)** |
 | `process` | `proc_listpids` name match | `pgrep` calls |
 | `graph` | ring buffer feeding a `CAShapeLayer` | `graph` component |
 
@@ -308,8 +308,8 @@ This replaces the entire hybrid state-file + `--trigger` + safety-poll dance
 documented in your `INTEGRATION.md`:
 
 ```
-StatusApp.app  --connect--> ~/.local/state/funkybar/funkybar.sock
-         --send-->    {"push":{"provider":"status","state":"ON"}}
+an external app  --connect--> ~/.local/state/funkybar/funkybar.sock
+         --send-->    {"push":{"provider":"myapp","state":"ON"}}
 ```
 
 The connection itself is the liveness signal, so "app crashed while connected"
@@ -397,19 +397,19 @@ style    = "$theme.pill"
 id       = "ports"
 position = "right"
 provider = "ports"
-ports    = [3000, 3001, 5173, 8080, 8081, 8082, 8083, 8084]
+ports    = [3000, 3001, 5173, 8080]
 watch    = ["proc-a", "proc-b"]
 interval = "5s"
 icon     = "󰒍"
 popup    = { on = "click", dismiss = ["mouse_exit", "click_outside"] }
 
 [[item]]
-id       = "status"
+id       = "a push item"
 position = "right"
 provider = "push"
-channel  = "status"
-seed_file = "~/.local/state/status-state"
-on_click  = { left = "status:toggle", right = "status:settings" }
+channel  = "a push item"
+seed_file = "~/.local/state/<app>-status"
+on_click  = { left = "a push item:toggle", right = "a push item:settings" }
 
   [item.states.ON]        = { icon = "󰦝", label = "STATUS", color = "$ok" }
   [item.states.CONNECTING] = { icon = "󰦝", label = "…",  color = "$warn" }
@@ -417,15 +417,15 @@ on_click  = { left = "status:toggle", right = "status:settings" }
   [item.states.OFF]        = { icon = "󰦞", label = "OFF", color = "$idle" }
 
 [[group]]
-id       = "meters_pill"
+id       = "a repeated group"
 position = "right"
 style    = "$theme.pill"
 provider = "push"
-channel  = "meter"
+channel  = "a push item"
 
   [[group.item]]
   repeat = ["c", "b", "a"]
-  background.image = "~/.config/funkybar/icons/meter/$item.png"
+  background.image = "~/.config/funkybar/icons/a push item/$item.png"
   background.image.scale = 0.38
   label = "$$$price"
 
@@ -449,13 +449,13 @@ Notes on the design:
   your current rc, where `0xff141414` appears seven times.
 - **`repeat`** replaces the shell `for` loops that generate workspace and coin
   items.
-- **State tables** replace the `case "$STATE" in` blocks in `status.sh`, and the
-  same shape covers the meter and ports colour logic.
+- **State tables** replace the `case "$STATE" in` blocks in a status-file plugin, and the
+  same shape covers the a push item and ports colour logic.
 - **Colours are `#rrggbb` / `#aarrggbb`,** not `0xaarrggbb`, with a typed parser
   and an error pointing at the offending line.
 - **Popups are declarative**, with a `dismiss` policy, so your hand-rolled
   `mouse.exited.global` subscription and the `python3` JSON query in
-  `ports.sh` both disappear (this is also issue #835).
+  `ports` plugin both disappear (this is also issue #835).
 - **Symlinks are resolved and never executed**, fixing #553 for nix users.
 - `funkybar check` validates without applying; `funkybar reload` applies
   atomically or rejects the whole file.
@@ -485,7 +485,7 @@ funkybar check                    # validate config, exit non-zero on error
 funkybar reload                   # atomic config reload
 funkybar query [selector]         # JSON dump of bar / item / provider state
 funkybar set <selector> k=v ...   # runtime override (not persisted)
-funkybar push <channel> <json>    # what StatusApp.app / ExampleApp.app call
+funkybar push <channel> <json>    # what an external app / another external app call
 funkybar watch                    # live event stream, for debugging
 funkybar doctor                   # permissions, fonts, aerospace hook, perms
 ```
@@ -629,7 +629,7 @@ Nothing gets deleted until funkybar runs. Sequence:
    TOML starting point (item names, positions, colours, fonts, paddings). Scripts
    are emitted as `command` providers, then replaced with built-ins one at a
    time.
-3. StatusApp.app and ExampleApp.app: add a `funkybar push` call alongside the existing
+3. external status-writing apps: add a `funkybar push` call alongside the existing
    `sketchybar --trigger`. Both work simultaneously; drop the old one when ready.
    The `Process` pipe-drain workaround in your `SketchybarBridge.swift` becomes
    a single socket write.
