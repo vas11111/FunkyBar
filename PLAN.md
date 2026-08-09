@@ -404,12 +404,12 @@ icon     = "󰒍"
 popup    = { on = "click", dismiss = ["mouse_exit", "click_outside"] }
 
 [[item]]
-id       = "a push item"
+id       = "status"
 position = "right"
 provider = "push"
-channel  = "a push item"
-seed_file = "~/.local/state/<app>-status"
-on_click  = { left = "a push item:toggle", right = "a push item:settings" }
+channel  = "status"
+seed_file = "~/.local/state/myapp-status"
+on_click  = { left = "status:toggle", right = "status:settings" }
 
   [item.states.ON]        = { icon = "󰦝", label = "STATUS", color = "$ok" }
   [item.states.CONNECTING] = { icon = "󰦝", label = "…",  color = "$warn" }
@@ -421,11 +421,11 @@ id       = "a repeated group"
 position = "right"
 style    = "$theme.pill"
 provider = "push"
-channel  = "a push item"
+channel  = "prices"
 
   [[group.item]]
   repeat = ["c", "b", "a"]
-  background.image = "~/.config/funkybar/icons/a push item/$item.png"
+  background.image = "~/.config/funkybar/icons/$item.png"
   background.image.scale = 0.38
   label = "$$$price"
 
@@ -450,7 +450,7 @@ Notes on the design:
 - **`repeat`** replaces the shell `for` loops that generate workspace and coin
   items.
 - **State tables** replace the `case "$STATE" in` blocks in a status-file plugin, and the
-  same shape covers the a push item and ports colour logic.
+  same shape covers the push and ports colour logic.
 - **Colours are `#rrggbb` / `#aarrggbb`,** not `0xaarrggbb`, with a typed parser
   and an error pointing at the offending line.
 - **Popups are declarative**, with a `dismiss` policy, so your hand-rolled
