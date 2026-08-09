@@ -8,6 +8,11 @@ import FunkyBarRender
 @MainActor
 final class BarRuntime {
 
+    /// Set FUNKYBAR_DEBUG_EVENTS=1 to trace input and provider updates on
+    /// stderr. Without it there is no way to tell "the event never arrived"
+    /// from "the event arrived and changed nothing".
+    private static let traceEvents = ProcessInfo.processInfo.environment["FUNKYBAR_DEBUG_EVENTS"] == "1"
+
     private let controller = BarController()
     private let wheel = TimerWheel()
     private var config = Config()
@@ -165,6 +170,18 @@ final class BarRuntime {
     }
 
     private func ingest(_ update: ProviderUpdate) {
+        if Self.traceEvents {
+            var parts = update.values.map { "\($0.key)=\($0.value)" }.sorted()
+            // Per-clone values are where repeated items carry their data, so a
+            // trace that omits them reports a coin update as empty.
+            for (id, fields) in update.perItem.sorted(by: { $0.key < $1.key }) {
+                let inner = fields.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ",")
+                parts.append("[\(id) \(inner)]")
+            }
+            let expansion = update.expansion.map { " expand=[\($0.joined(separator: ","))]" } ?? ""
+            FileHandle.standardError.write(
+                Data("update: \(update.itemID)  \(parts.joined(separator: " "))\(expansion)\n".utf8))
+        }
         inputs.values[update.itemID] = update.values
         for (id, values) in update.perItem {
             inputs.values[id] = values
@@ -193,11 +210,6 @@ final class BarRuntime {
     }
 
     // MARK: - Events
-
-    /// Set FUNKYBAR_DEBUG_EVENTS=1 to trace input on stderr. Without this
-    /// there is no way to tell "the click never arrived" from "the click
-    /// arrived and the action did nothing".
-    private static let traceEvents = ProcessInfo.processInfo.environment["FUNKYBAR_DEBUG_EVENTS"] == "1"
 
     private func handle(_ event: BarEvent) {
         if Self.traceEvents {

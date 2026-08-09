@@ -11,17 +11,14 @@ import FunkyBarCore
 /// Here one command answers the whole question, and every workspace layer is
 /// updated inside a single transaction.
 ///
-/// Two ways to drive it, in order of preference:
+/// Driven by `aerospace subscribe --all`, which holds a socket open and emits
+/// one JSON line per event:
 ///
-/// 1. **Push.** Add to `~/.config/aerospace/aerospace.toml`:
+///     {"_event":"focused-workspace-changed","prevWorkspace":"6","workspace":"3"}
 ///
-///        exec-on-workspace-change = ['/bin/bash', '-c',
-///          'funkybar push aerospace focused=$AEROSPACE_FOCUSED_WORKSPACE']
-///
-///    Updates are then instant and the poll below can be relaxed to a minute.
-///
-/// 2. **Poll.** Without that hook, a modest interval keeps the bar correct.
-///    Still one subprocess per tick rather than seven per switch.
+/// So a workspace switch is a notification, not a poll, and the bar updates as
+/// fast as the line arrives. A slow interval remains only to catch the
+/// workspace *list* changing, which no event reports.
 @MainActor
 public final class AeroSpaceProvider: Provider {
     public static let kind = "aerospace"
@@ -35,10 +32,16 @@ public final class AeroSpaceProvider: Provider {
     private var emit: (@MainActor (ProviderUpdate) -> Void)?
     private var lastUpdate: ProviderUpdate?
     private var inFlight = false
+    private var stream: StreamingProcess?
+    /// Last focus reported by the event stream, applied without waiting for
+    /// the workspace list to come back.
+    private var focused: String?
+    private var workspaces: [String] = []
 
     public init(_ context: ProviderContext) {
         itemID = context.itemID
-        policy = .interval(seconds: context.interval ?? 5)
+        // Only the workspace list needs polling, and it changes rarely.
+        policy = .interval(seconds: context.interval ?? 60)
         binary = context.string("binary") ?? "aerospace"
         // "no" hides empty workspaces, matching `--empty no`; "all" keeps them.
         emptyPolicy = context.string("empty") ?? "all"
@@ -46,11 +49,63 @@ public final class AeroSpaceProvider: Provider {
 
     public func start(emit: @escaping @MainActor (ProviderUpdate) -> Void) {
         self.emit = emit
+
+        let stream = StreamingProcess(command: "\(binary) subscribe --all") { [weak self] line in
+            self?.handle(event: line)
+        }
+        stream.start()
+        self.stream = stream
     }
 
-    /// A push from the AeroSpace hook: re-query immediately.
-    public func handle(command: String) {
-        query()
+    public func stop() {
+        stream?.stop()
+        stream = nil
+    }
+
+    /// Applies one event line from `aerospace subscribe`.
+    private func handle(event line: String) {
+        guard let data = line.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let event = object["_event"] as? String
+        else { return }
+
+        switch event {
+        case "focused-workspace-changed", "focus-changed", "focused-monitor-changed":
+            guard let workspace = object["workspace"] as? String else { return }
+            // Repaint immediately from the event; do not wait on a subprocess.
+            if workspace != focused {
+                focused = workspace
+                publish()
+            }
+            // A workspace can appear or empty as focus moves, so reconcile the
+            // list too, but that is the slow path and never blocks the repaint.
+            if !workspaces.contains(workspace) { query() }
+
+        case "workspace-created", "workspace-destroyed", "monitor-added", "monitor-removed":
+            query()
+
+        default:
+            break
+        }
+    }
+
+    /// Emits from cached state, with no subprocess involved.
+    private func publish() {
+        guard !workspaces.isEmpty else { return }
+
+        var update = ProviderUpdate(itemID: itemID)
+        update.expansion = workspaces
+        update.values = ["focused": focused ?? ""]
+        for workspace in workspaces {
+            update.perItem["\(itemID).\(workspace)"] = [
+                "workspace": workspace,
+                "state": workspace == focused ? "active" : "inactive",
+            ]
+        }
+
+        guard update != lastUpdate else { return }
+        lastUpdate = update
+        emit?(update)
     }
 
     public func refresh() -> ProviderUpdate? {
@@ -91,30 +146,25 @@ public final class AeroSpaceProvider: Provider {
                 self.inFlight = false
                 guard let parsed, !parsed.all.isEmpty else { return }
 
-                var update = ProviderUpdate(itemID: self.itemID)
-                update.expansion = parsed.all
-                update.values = ["focused": parsed.focused ?? ""]
+                self.workspaces = parsed.all
+                // Trust the event stream's focus over a query result that may
+                // have been in flight across a switch.
+                if self.focused == nil { self.focused = parsed.focused }
                 // One state per workspace, applied together, so the bar never
                 // shows two highlighted workspaces mid-switch.
-                for workspace in parsed.all {
-                    update.perItem["\(self.itemID).\(workspace)"] = [
-                        "workspace": workspace,
-                        "state": workspace == parsed.focused ? "active" : "inactive",
-                    ]
-                }
-
-                guard update != self.lastUpdate else { return }
-                self.lastUpdate = update
-                self.emit?(update)
+                self.publish()
             }
         }
     }
 }
 
-/// Receives values pushed over the socket, or seeded from a file at startup.
+/// State written by another application.
 ///
-/// Replaces the state-file + `--trigger` + safety-poll pattern described in
-/// INTEGRATION.md with one mechanism.
+/// Watches the state file rather than reading it once. StatusApp.app and
+/// ExampleApp.app already maintain these files, so this picks up a toggle or a
+/// price tick the moment it lands, with no change to either app and no socket
+/// protocol. Reading once at startup meant the bar showed whatever was true
+/// when it launched and never moved again.
 @MainActor
 public final class PushProvider: Provider {
     public static let kind = "push"
@@ -133,6 +183,7 @@ public final class PushProvider: Provider {
     private var emit: (@MainActor (ProviderUpdate) -> Void)?
     private var values: [String: String] = [:]
     private var perItem: [String: [String: String]] = [:]
+    private var watcher: FileWatcher?
 
     public init(_ context: ProviderContext) {
         itemID = context.itemID
@@ -164,10 +215,23 @@ public final class PushProvider: Provider {
     public func start(emit: @escaping @MainActor (ProviderUpdate) -> Void) {
         self.emit = emit
         seed()
+
+        guard let seedFile else { return }
+        let watcher = FileWatcher(path: seedFile) { [weak self] in
+            guard let self else { return }
+            self.seed()
+            if let update = self.refresh() { self.emit?(update) }
+        }
+        watcher.start()
+        self.watcher = watcher
     }
 
-    /// Cold start from a state file, so the bar is honest before the app
-    /// connects rather than blank.
+    public func stop() {
+        watcher?.stop()
+        watcher = nil
+    }
+
+    /// Reads the current contents of the state file.
     ///
     /// Two shapes are supported. A bare scalar (`status-state` holds `OFF`)
     /// becomes `state`/`value`. A delimited record (`meter` holds
