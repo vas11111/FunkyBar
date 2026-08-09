@@ -18,7 +18,6 @@ public final class StreamingProcess: @unchecked Sendable {
 
     private let lock = NSLock()
     private var pid: pid_t = 0
-    private var readFD: Int32 = -1
     private var stopped = false
     private var restartDelay: Double = 0.5
 
@@ -27,31 +26,42 @@ public final class StreamingProcess: @unchecked Sendable {
         self.onLine = onLine
     }
 
+    /// Spawns immediately, then reads in the background.
+    ///
+    /// The spawn is deliberately synchronous. Doing it on a background queue
+    /// left a window where `stop()` ran before `pid` was recorded, found
+    /// nothing to kill, and returned; if the process then exited, the child
+    /// outlived it with ppid 1. Short-lived invocations such as `--dump` hit
+    /// that window every time.
     public func start() {
         lock.lock()
         stopped = false
         lock.unlock()
-        queue.async { [weak self] in self?.spawnAndRead() }
+        spawn()
     }
 
     public func stop() {
         lock.lock()
         stopped = true
         let child = pid
-        let fd = readFD
         pid = 0
-        readFD = -1
         lock.unlock()
 
-        // Signal the process GROUP, not just the shell. `sh -c "aerospace
-        // subscribe"` forks the real command as a grandchild, so SIGTERM to sh
-        // alone leaves it running with ppid 1. POSIX_SPAWN_SETSID makes the
-        // child a group leader, so pgid == pid and -pid reaches all of it.
-        if child > 0 {
-            kill(-child, SIGTERM)
-            kill(child, SIGTERM)
-        }
-        if fd >= 0 { close(fd) }
+        // Signal only. The read loop owns the descriptor and closes it once
+        // the kill drops the write end and `read` returns EOF. Closing it here
+        // as well would be a double close, and fd numbers get reused, so the
+        // second close can land on an unrelated live descriptor.
+        terminate(child)
+    }
+
+    /// Signals the whole process group.
+    ///
+    /// `POSIX_SPAWN_SETSID` makes the child a session and process-group
+    /// leader, so `-pid` reaches anything it forked as well.
+    private func terminate(_ child: pid_t) {
+        guard child > 0 else { return }
+        kill(-child, SIGTERM)
+        kill(child, SIGTERM)
     }
 
     public var isRunning: Bool {
@@ -60,7 +70,7 @@ public final class StreamingProcess: @unchecked Sendable {
         return pid > 0
     }
 
-    private func spawnAndRead() {
+    private func spawn() {
         var fds: [Int32] = [0, 0]
         guard pipe(&fds) == 0 else { return scheduleRestart() }
 
@@ -80,7 +90,9 @@ public final class StreamingProcess: @unchecked Sendable {
 
         var child: pid_t = 0
         let environment = ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
-        let status = withCStringArray(["/bin/sh", "-c", command]) { argv in
+        // `exec` so the shell replaces itself: one process to signal and reap,
+        // with no grandchild that can outlive it.
+        let status = withCStringArray(["/bin/sh", "-c", "exec \(command)"]) { argv in
             withCStringArray(environment) { envp in
                 posix_spawn(&child, "/bin/sh", &actions, &attributes, argv, envp)
             }
@@ -93,29 +105,39 @@ public final class StreamingProcess: @unchecked Sendable {
         }
 
         lock.lock()
-        pid = child
-        readFD = fds[0]
         let shouldStop = stopped
+        if !shouldStop { pid = child }
         lock.unlock()
 
         if shouldStop {
-            kill(-child, SIGTERM)
-            kill(child, SIGTERM)
+            // Told to stop mid-spawn. Reap here, or it becomes a zombie that
+            // is never waited on and the pid is held for the process lifetime.
+            terminate(child)
             close(fds[0])
+            var ignored: Int32 = 0
+            waitpid(child, &ignored, 0)
             return
         }
 
-        readLines(from: fds[0])
+        let readFD = fds[0]
+        queue.async { [weak self] in
+            guard let self else {
+                close(readFD)
+                var ignored: Int32 = 0
+                waitpid(child, &ignored, 0)
+                return
+            }
+            self.readLines(from: readFD)
 
-        var exitStatus: Int32 = 0
-        waitpid(child, &exitStatus, 0)
+            var exitStatus: Int32 = 0
+            waitpid(child, &exitStatus, 0)
 
-        lock.lock()
-        pid = 0
-        readFD = -1
-        lock.unlock()
+            self.lock.lock()
+            if self.pid == child { self.pid = 0 }
+            self.lock.unlock()
 
-        scheduleRestart()
+            self.scheduleRestart()
+        }
     }
 
     private func readLines(from fd: Int32) {
@@ -162,7 +184,7 @@ public final class StreamingProcess: @unchecked Sendable {
             let halted = self.stopped
             self.lock.unlock()
             guard !halted else { return }
-            self.spawnAndRead()
+            self.spawn()
         }
     }
 }
@@ -177,8 +199,13 @@ public final class StreamingProcess: @unchecked Sendable {
 public final class FileWatcher: @unchecked Sendable {
     private let path: String
     private let onChange: @MainActor () -> Void
-    private var source: DispatchSourceFileSystemObject?
     private let queue = DispatchQueue(label: "funkybar.filewatch", qos: .utility)
+
+    // All mutable state behind one lock. `watch()` runs on the background
+    // queue via the retry path while `stop()` is called from the main actor.
+    private let lock = NSLock()
+    private var source: DispatchSourceFileSystemObject?
+    private var stopped = false
 
     public init(path: String, onChange: @escaping @MainActor () -> Void) {
         self.path = path
@@ -186,10 +213,20 @@ public final class FileWatcher: @unchecked Sendable {
     }
 
     public func start() {
+        lock.lock()
+        stopped = false
+        lock.unlock()
         watch()
     }
 
     private func watch() {
+        lock.lock()
+        let halted = stopped
+        lock.unlock()
+        // Without this the retry path outlives stop(), installing a live
+        // source and a fresh descriptor on a watcher already torn down.
+        guard !halted else { return }
+
         let directory = (path as NSString).deletingLastPathComponent
         let descriptor = open(directory, O_EVTONLY)
         guard descriptor >= 0 else {
@@ -210,13 +247,26 @@ public final class FileWatcher: @unchecked Sendable {
             DispatchQueue.main.async { MainActor.assumeIsolated { handler() } }
         }
         source.setCancelHandler { close(descriptor) }
-        source.resume()
+
+        lock.lock()
+        if stopped {
+            lock.unlock()
+            source.cancel()
+            return
+        }
         self.source = source
+        lock.unlock()
+
+        source.resume()
     }
 
     public func stop() {
-        source?.cancel()
+        lock.lock()
+        stopped = true
+        let live = source
         source = nil
+        lock.unlock()
+        live?.cancel()
     }
 }
 

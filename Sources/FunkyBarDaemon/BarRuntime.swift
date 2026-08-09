@@ -231,6 +231,16 @@ final class BarRuntime {
         if Self.traceEvents {
             FileHandle.standardError.write(Data("event: \(event.itemID) \(event.kind)\n".utf8))
         }
+        // A popup with trigger = "hover" opens on enter. Without this the
+        // option decoded fine and then did nothing.
+        if case .hoverEnter = event.kind {
+            if let item = config.allItems.first(where: { $0.id == event.itemID }),
+               item.popup?.trigger == .hover {
+                controller.togglePopup(for: event.itemID, config: config, on: event.displayID)
+            }
+            return
+        }
+
         guard case .click(let button) = event.kind else { return }
         guard let item = config.allItems.first(where: { $0.id == event.itemID }) else {
             if Self.traceEvents {

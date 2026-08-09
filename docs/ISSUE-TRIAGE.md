@@ -7,20 +7,24 @@ Dispositions:
 
 - **STRUCTURAL** - the bug cannot occur in the new architecture. No code is
   written to fix it; the code that caused it does not exist.
+- **STRUCTURAL (designed, not built)** - the architecture forecloses the bug,
+  but the feature it concerns is not implemented yet, so the claim is about the
+  design rather than about running code. Marked explicitly, because "cannot
+  happen" and "does not exist yet" are not the same statement.
 - **DESIGN** - fixed by a specific, deliberate design decision. Named below.
 - **FEATURE** - a request that becomes a first-class config option.
 - **N/A** - documentation, packaging, or non-technical.
 
 ---
 
-## STRUCTURAL (14)
+## STRUCTURAL (11 built, 3 designed but not built)
 
 | # | Title | Why it cannot happen |
 | --- | --- | --- |
-| 839 | Blur not working after 2.24.0 | Blur is `NSVisualEffectView`, not `SLSSetWindowBackgroundBlurRadius`. No display-server round trip to break. |
+| 839 | Blur not working after 2.24.0 | **Designed, not built.** Blur is planned as `NSVisualEffectView` rather than `SLSSetWindowBackgroundBlurRadius`; no blur is implemented yet, so there is nothing to break and nothing to credit. `bar.blur_radius` warns that it has no effect. |
 | 836 | Leak: `CGWindowListCopyWindowInfo` not released | ARC and `CFBridgingRelease` at the single `CSkyLight` boundary. Manual `CFRelease` sites do not exist. |
 | 834 | Unexpected flickering / shadow / border | One window, one layer tree, one `CATransaction`. The compositor never observes a partial frame. |
-| 827 | Blur bleeds past bar radius, causes flicker | The effect view is masked by the same `CAShapeLayer` path that draws the corner radius. Blur cannot exceed the shape. |
+| 827 | Blur bleeds past bar radius, causes flicker | **Designed, not built.** Same as #839: the masking approach is planned, no blur exists yet. |
 | 808 | Dynamic wallpaper causes flashing | No per-frame window capture and no per-item window reshaping, which is what the wallpaper daemon was racing. |
 | 796 | `background.padding` overwrites `padding` | `margin` (outside) and `padding` (inside) are distinct fields on distinct types. Neither can write the other. |
 | 794 | Deadlock when a callback calls `set()` mid-event | Socket IPC with bounded, non-blocking writes. The daemon never blocks on a client write. Mutual send-block is unrepresentable. |
@@ -30,7 +34,7 @@ Dispositions:
 | 691 | Crash on wake (`CFRelease` NULL in `window_close`) | There are no per-item windows to close, so `window_close` has no analogue. |
 | 639 | Brackets require `background.height`, padding ignored | A group is a real layout container that sizes to its children plus insets. |
 | 553 | Cannot run when the config is an executable symlink | The config is data, not an executable. Symlinks are resolved for watching and never `chmod`ed. |
-| 240 | Vertical bar | Layout `axis` is a parameter of the engine, not an assumption baked into every call site. |
+| 240 | Vertical bar | **Designed, not built.** `Axis` exists as a value type, but `LayoutEngine` is horizontal-only and never reads it. `bar.axis` warns that it has no effect. |
 
 ---
 

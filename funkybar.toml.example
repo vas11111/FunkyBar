@@ -271,12 +271,34 @@ padding  = { left = 3, right = 3 }
   id       = "meter"
   repeat   = ["a", "b", "c"]
 
+    [group.item.on_click]
+    left  = "meter:refresh"
+    right = "meter:copy"
+
     [group.item.provider]
     kind           = "push"
     channel        = "meter"
     seed_file      = "~/.local/state/meter"
     seed_keys      = ["a", "b", "c"]
     seed_field     = "price"
+
+      # Ports meter_click.sh: left refreshes, right copies to the clipboard,
+      # and a click while the app is closed launches it.
+      [group.item.provider.commands]
+      refresh = """
+        if pgrep -f 'ExampleApp.app/Contents/MacOS/ExampleApp' >/dev/null 2>&1; then
+          /Applications/ExampleApp.app/Contents/MacOS/ExampleApp --refresh
+        else
+          open /Applications/ExampleApp.app
+        fi
+        """
+      copy = """
+        if pgrep -f 'ExampleApp.app/Contents/MacOS/ExampleApp' >/dev/null 2>&1; then
+          /Applications/ExampleApp.app/Contents/MacOS/ExampleApp --copy
+        else
+          open /Applications/ExampleApp.app
+        fi
+        """
 
     [group.item.icon]
     drawing = false

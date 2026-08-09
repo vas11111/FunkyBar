@@ -67,8 +67,25 @@ public enum ConfigDecoder {
         "displays", "sticky", "topmost", "show_in_fullscreen", "hover", "font_smoothing",
     ]
 
+    /// Options the schema accepts but no layer acts on yet.
+    ///
+    /// Silently accepting these is worse than rejecting them: the config looks
+    /// like it asked for something and nothing happens, which is
+    /// indistinguishable from a bug. Warn, name the milestone, and carry on.
+    private static let unimplemented: [String: String] = [
+        "blur_radius": "blur is not implemented yet (M3)",
+        "corner_radius": "the bar's own corner is not drawn yet; item and group corners are",
+        "border_width": "the bar's own border is not drawn yet; item and group borders are",
+        "border_color": "the bar's own border is not drawn yet; item and group borders are",
+        "axis": "the layout engine is horizontal-only; a vertical bar is M3",
+    ]
+
     private static func decodeBar(_ reader: ConfigReader) -> BarConfig {
         reader.warnUnknownKeys(barKeys)
+        for (key, reason) in unimplemented where reader.has(key) {
+            reader.sink.warn("'bar.\(key)' has no effect: \(reason)",
+                             at: reader.table[key]?.location ?? reader.location)
+        }
         var bar = BarConfig()
 
         if let value = reader.length("height") { bar.height = value }
@@ -181,7 +198,14 @@ public enum ConfigDecoder {
         reader.warnUnknownKeys(["radius", "style"])
         var corner = base
         if let value = reader.length("radius") { corner.radius = value }
-        if let style = reader.enumeration("style", as: CornerStyle.self) { corner.style = style }
+        if let style = reader.enumeration("style", as: CornerStyle.self) {
+            if style == .inverted {
+                reader.sink.warn(
+                    "corner style \"inverted\" is not implemented and draws as \"round\" (M3)",
+                    at: reader.table["style"]?.location ?? reader.location)
+            }
+            corner.style = style
+        }
         return corner
     }
 
@@ -406,6 +430,11 @@ public enum ConfigDecoder {
 
     private static func decodePopup(_ reader: ConfigReader) -> PopupSpec {
         reader.warnUnknownKeys(["on", "trigger", "dismiss", "axis", "style", "alignment", "rows"])
+        for key in ["axis", "alignment"] where reader.has(key) {
+            reader.sink.warn(
+                "'popup.\(key)' has no effect yet: popup rows are always a vertical, left-aligned stack",
+                at: reader.table[key]?.location ?? reader.location)
+        }
         var popup = PopupSpec()
 
         if let trigger = reader.enumeration("on", as: PopupSpec.Trigger.self) { popup.trigger = trigger }

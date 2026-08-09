@@ -41,9 +41,10 @@ decoded end-to-end by the suite, so it cannot silently rot.
 | Providers | `clock`, `frontApp`, `battery`, `aerospace`, `ports`, `push`. |
 | Timer wheel | One `DispatchSourceTimer` at the GCD of all intervals, 20% leeway, suspended on sleep. |
 | Process runner | `posix_spawn` with `POSIX_SPAWN_SETSID`, concurrent pipe drain, hard deadline, concurrency cap. |
-| Daemon | Hot reload following symlinks, sleep/wake suspension, coalesced redraws, `--check`, `--selftest`. |
+| Daemon | Hot reload following symlinks, sleep/wake suspension, coalesced redraws, `--check`, `--selftest`, `--dump`, `--capture`. |
+| Popups | Rows from providers, kill actions, dismissal on mouse-exit / click-outside / timeout, anchored to the display clicked on. |
 
-147 tests, all passing.
+192 tests, all passing.
 
 ## Measured
 
@@ -86,10 +87,12 @@ isolation experiment, and the paths to closing the gap.
 
 ## Not built yet
 
-Everything here is planned, not missing by accident.
+Everything here is planned, not missing by accident. Config options for
+unbuilt features now emit a warning naming the gap, rather than decoding
+silently and doing nothing.
 
-- **Popups.** Parsed, validated and modelled; not drawn. This is the `ports`
-  click-through, so that item currently shows state but has no popup.
+- ~~Popups.~~ **Built.** The ports popup draws, lists live ports and
+  watched processes, and its rows kill what they name.
 - **Socket IPC and the `funkybar` CLI.** `push` providers seed from a file but
   have nothing to receive from yet, so `status` and `meter` show their seeded
   or empty state. This is the next piece of work.
