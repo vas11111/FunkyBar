@@ -131,6 +131,7 @@ public final class BarController {
     private var popups: [String: PopupWindow] = [:]
     private var popupRows: [String: [PopupRow]] = [:]
     private var outsideClickMonitor: Any?
+    private var pointerMonitor: Any?
     private var popupTimeout: DispatchWorkItem?
 
     /// Fired when a popup row with an action is clicked.
@@ -142,6 +143,63 @@ public final class BarController {
         self.config = config
         self.measuring = CachingTextMeasurer(CoreTextMeasurer())
         observeScreenChanges()
+        observePointer()
+    }
+
+    // MARK: - Pointer
+
+    /// Makes each panel interactive only while the pointer is over an item.
+    ///
+    /// The bar spans the whole width of its display. A panel that accepts mouse
+    /// events everywhere therefore owns the entire top edge of the screen,
+    /// which stops an auto-hidden menu bar from revealing and makes its items
+    /// unclickable. SketchyBar avoids this by having one window per item, so
+    /// the space between items belongs to nobody.
+    ///
+    /// Here the panel stays click-through and is switched on only over an item,
+    /// which reproduces that behaviour with one window.
+    private func observePointer() {
+        // A global monitor sees the pointer while the panel is click-through;
+        // once it is interactive the events come to the view instead, which
+        // calls the same evaluation.
+        pointerMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDragged, .rightMouseDragged]
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pointerMoved(to: NSEvent.mouseLocation) }
+        }
+    }
+
+    private func pointerMoved(to screenPoint: CGPoint) {
+        var hitItem: String?
+        var hitDisplay: CGDirectDisplayID?
+
+        for (id, display) in displays {
+            guard display.panel.frame.contains(screenPoint) else {
+                display.panel.ignoresMouseEvents = true
+                continue
+            }
+            let local = CGPoint(
+                x: screenPoint.x - display.panel.frame.minX,
+                y: screenPoint.y - display.panel.frame.minY
+            )
+            let item = display.hitTest(local)
+            // Interactive only over an item; everywhere else the pointer falls
+            // through to whatever is beneath, including the menu bar.
+            display.panel.ignoresMouseEvents = (item == nil)
+            if let item {
+                hitItem = item
+                hitDisplay = id
+            }
+        }
+
+        guard hitItem != hovered else { return }
+        if let previous = hovered {
+            onEvent?(BarEvent(itemID: previous, kind: .hoverExit, displayID: hitDisplay ?? 0))
+        }
+        hovered = hitItem
+        if let hitItem {
+            onEvent?(BarEvent(itemID: hitItem, kind: .hoverEnter, displayID: hitDisplay ?? 0))
+        }
     }
 
     // MARK: - Config
@@ -312,6 +370,8 @@ public final class BarController {
     }
 
     public func stop() {
+        if let pointerMonitor { NSEvent.removeMonitor(pointerMonitor) }
+        pointerMonitor = nil
         removeDismissal()
         for popup in popups.values { popup.close() }
         popups.removeAll()

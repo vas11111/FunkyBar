@@ -45,6 +45,9 @@ final class PopupWindow {
         panel = BarPanel(frame: CGRect(x: 0, y: 0, width: 10, height: 10), config: config)
         view = BarView(frame: CGRect(x: 0, y: 0, width: 10, height: 10))
         panel.contentView = view
+        // Unlike the bar, a popup is small and transient, so it takes events
+        // over its whole area rather than only over rows.
+        panel.ignoresMouseEvents = false
         root = view.layer!
         root.masksToBounds = false
 

@@ -34,12 +34,28 @@ public final class BarPanel: NSPanel {
         isMovableByWindowBackground = false
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
-        ignoresMouseEvents = false
+        // Click-through by default. The bar spans the full width of the
+        // display, so a panel that accepts events everywhere swallows the whole
+        // top edge: the auto-hidden menu bar never reveals and its items cannot
+        // be clicked. BarController flips this to false only while the pointer
+        // is actually over an item, which is the per-item interactivity
+        // sketchybar gets from having one window per item.
+        ignoresMouseEvents = true
         // Excluded from the window menu and from Exposé cycling.
         isExcludedFromWindowsMenu = true
         animationBehavior = .none
 
         apply(config)
+    }
+
+    /// Keeps the requested frame exactly.
+    ///
+    /// AppKit constrains a window below the menu-bar level out of the menu bar
+    /// strip, which on a notched display pushed the bar from y=4 down to y=38
+    /// the moment its level dropped below 24. The bar is meant to live in that
+    /// strip, so opt out of the constraint rather than the level.
+    public override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        frameRect
     }
 
     public func apply(_ config: BarConfig) {
@@ -62,8 +78,10 @@ public final class BarPanel: NSPanel {
         case .off:
             return .normal
         case .window:
-            // Above ordinary windows, below the system menu bar's own overlays.
-            return NSWindow.Level(Int(CGWindowLevelForKey(.statusWindow)))
+            // Below the menu bar, not above it. Sitting at .statusWindow (25)
+            // puts the bar over the system menu bar (24), so an auto-hidden
+            // menu bar reveals *underneath* the bar and cannot be used.
+            return NSWindow.Level(Int(CGWindowLevelForKey(.mainMenuWindow)) - 1)
         case .all:
             return NSWindow.Level(Int(CGWindowLevelForKey(.maximumWindow)))
         }
