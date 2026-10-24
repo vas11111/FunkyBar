@@ -92,13 +92,20 @@ public enum ConfigResolver {
 
     /// Values addressed to the exact id win; otherwise fall back to the
     /// template id, so one provider can feed every clone.
-    private static func values(for item: ItemConfig, inputs: Inputs) -> [String: String] {
+    public static func values(for item: ItemConfig, inputs: Inputs) -> [String: String] {
         var base: [String: String] = [:]
         if let repeatValue = item.repeatValue {
             let templateID = String(item.id.dropLast(repeatValue.count + 1))
             base = inputs.values[templateID] ?? [:]
         }
-        guard let exact = inputs.values[item.id] else { return base }
-        return base.merging(exact) { _, new in new }
+        base.merge(inputs.values[item.id] ?? [:]) { _, new in new }
+        if let repeatValue = item.repeatValue {
+            base["repeat"] = repeatValue
+            if base["workspace"] == nil { base["workspace"] = repeatValue }
+            if case .dynamic(let field) = item.repeatSource, base[field] == nil {
+                base[field] = repeatValue
+            }
+        }
+        return base
     }
 }

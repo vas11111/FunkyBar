@@ -1,7 +1,6 @@
 # SwiftPM
 .build/
 .swiftpm/
-Package.resolved
 *.xcodeproj
 *.xcworkspace
 
@@ -22,3 +21,7 @@ dist/
 *.local
 /scratch/
 /.env
+
+# Python security tooling
+__pycache__/
+*.pyc

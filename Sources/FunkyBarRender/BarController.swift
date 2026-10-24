@@ -57,7 +57,7 @@ final class BarDisplay {
 
     static func frame(for screen: NSScreen, config: BarConfig) -> CGRect {
         let visible = screen.frame
-        let width = visible.width - config.margin.horizontal
+        let width = max(1, visible.width - config.margin.horizontal)
         let x = visible.minX + config.margin.leading + config.offset.x
 
         // The offset moves the bar, not its contents. sketchybar's windows sit
@@ -99,8 +99,10 @@ final class BarDisplay {
             measuring: measuring
         )
         lastLayout = result
-        tree.apply(layout: result, nodes: nodes)
+        tree.apply(layout: result, nodes: nodes, config: config)
     }
+
+    func invalidateImages() { tree.invalidateImageCache() }
 
     /// The topmost item under a point, or nil.
     func hitTest(_ point: CGPoint) -> String? {
@@ -128,6 +130,9 @@ public final class BarController {
     private var nodes: [ResolvedNode] = []
     private let measuring: CachingTextMeasurer
     private var hovered: String?
+    private var hoveredDisplay: CGDirectDisplayID?
+    private var hoverWork: DispatchWorkItem?
+    private var screenObserver: NSObjectProtocol?
     private var popups: [String: PopupWindow] = [:]
     private var popupRows: [String: [PopupRow]] = [:]
     private var outsideClickMonitor: Any?
@@ -192,13 +197,25 @@ public final class BarController {
             }
         }
 
-        guard hitItem != hovered else { return }
+        guard hitItem != hovered || hitDisplay != hoveredDisplay else { return }
+        hoverWork?.cancel()
+        hoverWork = nil
         if let previous = hovered {
-            onEvent?(BarEvent(itemID: previous, kind: .hoverExit, displayID: hitDisplay ?? 0))
+            onEvent?(BarEvent(itemID: previous, kind: .hoverExit, displayID: hoveredDisplay ?? 0))
         }
         hovered = hitItem
-        if let hitItem {
-            onEvent?(BarEvent(itemID: hitItem, kind: .hoverEnter, displayID: hitDisplay ?? 0))
+        hoveredDisplay = hitDisplay
+        if let hitItem, let hitDisplay {
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.hovered == hitItem, self.hoveredDisplay == hitDisplay else { return }
+                    self.onEvent?(BarEvent(itemID: hitItem, kind: .hoverEnter, displayID: hitDisplay))
+                }
+            }
+            hoverWork = work
+            if config.hoverActivationDelay > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + config.hoverActivationDelay, execute: work)
+            } else { work.perform() }
         }
     }
 
@@ -209,14 +226,17 @@ public final class BarController {
         // A reload may have changed fonts or sizes, and rebuilding the
         // measurement cache costs far less than shipping stale metrics.
         measuring.invalidate()
+        for display in displays.values { display.invalidateImages() }
         syncDisplays()
         for display in displays.values { display.reposition(config: config) }
         redraw()
     }
 
     public func apply(nodes newNodes: [ResolvedNode]) {
+        guard nodes != newNodes else { return }
         nodes = newNodes
         redraw()
+        guard !isSuspended else { return }
         // A visible popup must follow its provider, not freeze at whatever was
         // true when it opened.
         for (id, popup) in popups where popup.isVisible { refreshPopup(id) }
@@ -224,8 +244,24 @@ public final class BarController {
 
     /// Latest popup contents for an item, supplied by its provider.
     public func setPopupRows(_ rows: [PopupRow], for itemID: String) {
+        guard popupRows[itemID] != rows else { return }
         popupRows[itemID] = rows
         if popups[itemID]?.isVisible == true { refreshPopup(itemID) }
+    }
+
+    /// A successful config reload starts with fresh provider and popup state.
+    public func resetContent() {
+        closeAllPopups()
+        for popup in popups.values { popup.close() }
+        popups.removeAll()
+        popupRows.removeAll()
+        popupDisplay.removeAll()
+        popupConfig = nil
+        nodes.removeAll()
+        hovered = nil
+        hoveredDisplay = nil
+        hoverWork?.cancel()
+        hoverWork = nil
     }
 
     // MARK: - Popups
@@ -251,7 +287,7 @@ public final class BarController {
     }
 
     private func popupSpec(for itemID: String, in config: Config) -> PopupSpec? {
-        config.allItems.first { $0.id == itemID }?.popup
+        config.item(withID: itemID)?.popup
     }
 
     private var popupConfig: Config?
@@ -259,6 +295,7 @@ public final class BarController {
     private var popupDisplay: [String: CGDirectDisplayID] = [:]
 
     private func openPopup(_ itemID: String, config: Config, on displayID: CGDirectDisplayID = 0) {
+        guard !isSuspended else { return }
         guard let spec = popupSpec(for: itemID, in: config) else { return }
         // Only one open at a time; two popups on a status bar is never wanted.
         closeAllPopups()
@@ -272,7 +309,8 @@ public final class BarController {
                 self?.onPopupAction?(item, action)
             }
             created.onMouseExit = { [weak self] in
-                guard let self, let spec = self.popupSpec(for: itemID, in: config) else { return }
+                guard let self, let config = self.popupConfig,
+                      let spec = self.popupSpec(for: itemID, in: config) else { return }
                 guard spec.dismiss.contains(.mouseExit) else { return }
                 self.closePopup(itemID)
             }
@@ -280,12 +318,13 @@ public final class BarController {
             return created
         }()
 
-        refreshPopup(itemID)
+        guard refreshPopup(itemID) else { return }
         popup.show()
         installDismissal(for: itemID, spec: spec)
     }
 
-    private func refreshPopup(_ itemID: String) {
+    @discardableResult
+    private func refreshPopup(_ itemID: String) -> Bool {
         guard let popup = popups[itemID],
               let config = popupConfig,
               let spec = popupSpec(for: itemID, in: config),
@@ -293,7 +332,7 @@ public final class BarController {
                 ?? displays.values.first(where: { $0.lastLayout?.item(itemID) != nil })
                 ?? displays.values.first,
               let frame = display.lastLayout?.item(itemID)
-        else { return }
+        else { closePopup(itemID); return false }
 
         // The anchor is the item's pill in screen coordinates.
         let box = frame.background == .zero ? frame.frame : frame.background
@@ -304,8 +343,11 @@ public final class BarController {
             height: box.height
         )
 
+        let templateID = config.item(withID: itemID).flatMap { item in
+            item.repeatValue.map { String(item.id.dropLast($0.count + 1)) }
+        }
         popup.apply(
-            rows: popupRows[itemID] ?? [],
+            rows: popupRows[itemID] ?? templateID.flatMap { popupRows[$0] } ?? [],
             spec: spec,
             defaults: config.defaults,
             anchor: anchor,
@@ -313,6 +355,7 @@ public final class BarController {
             barConfig: self.config,
             contentsScale: BarDisplay.renderScale(for: display.screen)
         )
+        return true
     }
 
     private func closePopup(_ itemID: String) {
@@ -359,17 +402,26 @@ public final class BarController {
         for display in displays.values {
             display.apply(nodes: nodes, config: config, measuring: measuring)
         }
+        pointerMoved(to: NSEvent.mouseLocation)
     }
 
     // MARK: - Displays
 
     public func start() {
+        if pointerMonitor == nil { observePointer() }
+        if screenObserver == nil { observeScreenChanges() }
         syncDisplays()
         for display in displays.values { display.show() }
         redraw()
     }
 
     public func stop() {
+        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        screenObserver = nil
+        hoverWork?.cancel()
+        hoverWork = nil
+        hovered = nil
+        hoveredDisplay = nil
         if let pointerMonitor { NSEvent.removeMonitor(pointerMonitor) }
         pointerMonitor = nil
         removeDismissal()
@@ -417,11 +469,21 @@ public final class BarController {
             display.close()
             displays.removeValue(forKey: id)
         }
+        for (itemID, displayID) in popupDisplay where displayID != 0 && !live.contains(displayID) {
+            closePopup(itemID)
+        }
     }
 
     private func wire(_ display: BarDisplay, id displayID: CGDirectDisplayID) {
         display.view.onMouseDown = { [weak self, weak display] point, button, _ in
             guard let self, let display, let id = display.hitTest(point) else { return }
+            // Global event monitors do not see clicks in our own bar panels.
+            for (popupID, popup) in self.popups where popup.isVisible && popupID != id {
+                if let config = self.popupConfig,
+                   self.popupSpec(for: popupID, in: config)?.dismiss.contains(.clickOutside) == true {
+                    self.closePopup(popupID)
+                }
+            }
             self.onEvent?(BarEvent(itemID: id, kind: .click(button), displayID: displayID))
         }
         display.view.onScroll = { [weak self, weak display] point, delta, precise in
@@ -430,20 +492,15 @@ public final class BarController {
         }
         display.view.onMouseMoved = { [weak self, weak display] point in
             guard let self, let display else { return }
-            let id = point.flatMap { display.hitTest($0) }
-            guard id != self.hovered else { return }
-            if let previous = self.hovered {
-                self.onEvent?(BarEvent(itemID: previous, kind: .hoverExit, displayID: displayID))
-            }
-            self.hovered = id
-            if let id {
-                self.onEvent?(BarEvent(itemID: id, kind: .hoverEnter))
-            }
+            let screenPoint = point.map {
+                CGPoint(x: display.panel.frame.minX + $0.x, y: display.panel.frame.minY + $0.y)
+            } ?? NSEvent.mouseLocation
+            self.pointerMoved(to: screenPoint)
         }
     }
 
     private func observeScreenChanges() {
-        NotificationCenter.default.addObserver(
+        screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main

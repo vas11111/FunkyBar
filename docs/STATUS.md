@@ -1,6 +1,6 @@
 # Status
 
-Updated 2026-08-08.
+Updated 2026-10-24.
 
 M1 is running. The bar draws on both displays from native providers, with no
 shell plugins. What follows is what works, what was measured, and what is not
@@ -45,7 +45,17 @@ suite so it cannot silently rot. Personal setup belongs in
 | Daemon | Hot reload following symlinks, sleep/wake suspension, coalesced redraws, `--check`, `--selftest`, `--dump`, `--capture`. |
 | Popups | Rows from providers, kill actions, dismissal on mouse-exit / click-outside / timeout, anchored to the display clicked on. |
 
-192 tests, all passing.
+The suite now includes regression coverage for command deadlines and output
+caps, injection boundaries, trusted config files, stream shutdown, file
+replacement and symlink watches, timer alignment, popup placement, repeated
+click actions, numeric validation, and bounded theme expansion. See
+[the security review](../.security/README.md) for the verification commands.
+
+The bar now draws its configured fill, border and corners. Bottom-bar popups
+open upward, oversized popups stay within the display and scroll vertically,
+and popup alignment is honored. Reloads reset provider snapshots and close
+outdated popups. Unchanged snapshots skip layout, and removed artwork layers
+are released from a bounded image cache.
 
 ## Measured
 

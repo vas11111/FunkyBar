@@ -36,6 +36,7 @@ public final class AeroSpaceProvider: Provider {
     /// Last focus reported by the event stream, applied without waiting for
     /// the workspace list to come back.
     private var focused: String?
+    private var focusRevision: UInt64 = 0
     private var workspaces: [String] = []
 
     public init(_ context: ProviderContext) {
@@ -50,7 +51,7 @@ public final class AeroSpaceProvider: Provider {
     public func start(emit: @escaping @MainActor (ProviderUpdate) -> Void) {
         self.emit = emit
 
-        let stream = StreamingProcess(command: "\(binary) subscribe --all") { [weak self] line in
+        let stream = StreamingProcess(executable: binary, arguments: ["subscribe", "--all"]) { [weak self] line in
             self?.handle(event: line)
         }
         stream.start()
@@ -60,6 +61,7 @@ public final class AeroSpaceProvider: Provider {
     public func stop() {
         stream?.stop()
         stream = nil
+        emit = nil
     }
 
     /// Applies one event line from `aerospace subscribe`.
@@ -75,6 +77,7 @@ public final class AeroSpaceProvider: Provider {
             // Repaint immediately from the event; do not wait on a subprocess.
             if workspace != focused {
                 focused = workspace
+                focusRevision &+= 1
                 publish()
             }
             // A workspace can appear or empty as focus moves, so reconcile the
@@ -91,8 +94,6 @@ public final class AeroSpaceProvider: Provider {
 
     /// Emits from cached state, with no subprocess involved.
     private func publish() {
-        guard !workspaces.isEmpty else { return }
-
         var update = ProviderUpdate(itemID: itemID)
         update.expansion = workspaces
         update.values = ["focused": focused ?? ""]
@@ -118,41 +119,43 @@ public final class AeroSpaceProvider: Provider {
     private func query() {
         guard !inFlight else { return }
         inFlight = true
+        let revisionAtStart = focusRevision
+        let binary = binary
+        let runner = runner
+        var arguments = ["list-workspaces", "--monitor", "all"]
+        if emptyPolicy == "no" { arguments += ["--empty", "no"] }
 
-        // One invocation answers both questions. Upstream asks once per item.
-        let listFlag = emptyPolicy == "no" ? "--monitor all --empty no" : "--monitor all"
-        let command = """
-        \(binary) list-workspaces \(listFlag) 2>/dev/null; \
-        echo '---'; \
-        \(binary) list-workspaces --focused 2>/dev/null
-        """
-
-        runner.run(command) { [weak self] result in
-            let parsed: (all: [String], focused: String?)? = {
-                guard case .success(let output) = result, output.succeeded else { return nil }
-                let parts = output.standardOutput.components(separatedBy: "---")
-                guard parts.count >= 2 else { return nil }
-                let all = parts[0].split(separator: "\n")
-                    .map { $0.trimmingCharacters(in: .whitespaces) }
-                    .filter { !$0.isEmpty }
-                let focused = parts[1].split(separator: "\n")
-                    .map { $0.trimmingCharacters(in: .whitespaces) }
-                    .first { !$0.isEmpty }
-                return (all, focused)
-            }()
-
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.inFlight = false
-                guard let parsed, !parsed.all.isEmpty else { return }
-
-                self.workspaces = parsed.all
-                // Trust the event stream's focus over a query result that may
-                // have been in flight across a switch.
-                if self.focused == nil { self.focused = parsed.focused }
-                // One state per workspace, applied together, so the bar never
-                // shows two highlighted workspaces mid-switch.
-                self.publish()
+        // Query once per provider, passing all inputs as arguments. Do not use
+        // a shell or a delimiter that could also be a real workspace name.
+        runner.run(executable: binary, arguments: arguments) { [weak self] result in
+            guard case .success(let output) = result, output.succeeded else {
+                Task { @MainActor [weak self] in self?.inFlight = false }
+                return
+            }
+            let all = output.standardOutput.split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            runner.run(executable: binary, arguments: ["list-workspaces", "--focused"]) { [weak self] result in
+                let focus: String?
+                let focusSucceeded: Bool
+                if case .success(let output) = result, output.succeeded {
+                    focusSucceeded = true
+                    focus = output.standardOutput.split(separator: "\n")
+                        .map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
+                } else {
+                    focusSucceeded = false
+                    focus = nil
+                }
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.inFlight = false
+                    guard self.emit != nil else { return }
+                    self.workspaces = all
+                    // Polling still corrects focus when no stream is present,
+                    // but never overwrites an event received during the query.
+                    if focusSucceeded, self.focusRevision == revisionAtStart { self.focused = focus }
+                    self.publish()
+                }
             }
         }
     }
@@ -252,6 +255,7 @@ public final class PushProvider: Provider {
     public func stop() {
         watcher?.stop()
         watcher = nil
+        emit = nil
     }
 
     /// Reads the current contents of the state file.
@@ -262,16 +266,23 @@ public final class PushProvider: Provider {
     /// `seed_keys`, so each clone of a repeated item gets its own field.
     private func seed() {
         guard let seedFile,
-              let raw = try? String(contentsOfFile: seedFile, encoding: .utf8)
+              let raw = try? ConfigFile.readState(seedFile)
         else { return }
 
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
 
         guard !seedKeys.isEmpty else {
             values["state"] = text
             values["value"] = text
             return
+        }
+
+        // A shortened record clears the omitted fields on the next snapshot.
+        for key in seedKeys {
+            perItem["\(itemID).\(key)"]?.removeValue(forKey: seedField)
+            if perItem["\(itemID).\(key)"]?.isEmpty == true {
+                perItem.removeValue(forKey: "\(itemID).\(key)")
+            }
         }
 
         // Default to whitespace, which is what `read -r a b c < file` does in
@@ -280,7 +291,6 @@ public final class PushProvider: Provider {
         if let seedSeparator {
             parts = text.components(separatedBy: seedSeparator)
                 .map { $0.trimmingCharacters(in: .whitespaces) }
-                .filter { !$0.isEmpty }
         } else {
             parts = text.split(whereSeparator: \.isWhitespace).map(String.init)
         }

@@ -41,7 +41,8 @@ means the compositor never sees a partially updated bar.
 
 ## Install
 
-Requires macOS 26 (Tahoe) or later on Apple Silicon, and Swift 6.3 or later.
+Requires macOS 26 (Tahoe) or later on Apple Silicon. The reviewed build
+toolchain is Swift 6.4.1, pinned in [.swift-version](.swift-version).
 Command Line Tools is sufficient; full Xcode is not needed.
 
 ```sh
@@ -76,7 +77,6 @@ text   = "#f1d9a4"
 [[item]]
 id       = "clock"
 position = "right"
-provider = "clock"
 
   [item.label]
   text = "{time}  {date}"
@@ -104,6 +104,10 @@ funkybar.toml:12:9: error: 'bar.color' is not a valid colour: colour must start 
 
 Unknown keys are warnings with a "did you mean", so a typo never stops the bar
 from starting.
+
+Configs may contain shell actions, so the file must be owned by you or root and
+must not be writable by group or others (`chmod go-w funkybar.toml`). Symlinks
+are supported. Config files are limited to 1 MiB; provider state files to 64 KiB.
 
 ## Providers
 
@@ -170,6 +174,8 @@ both the reference and the reason this was worth writing.
 
 ## Documents
 
+- [.security/README.md](.security/README.md) — execution boundaries, dependency
+  inventory, toolchain policy, and security checks
 - [docs/STATUS.md](docs/STATUS.md) — what runs today and what does not
 - [docs/BENCHMARK.md](docs/BENCHMARK.md) — measurements and method
 - [docs/ISSUE-TRIAGE.md](docs/ISSUE-TRIAGE.md) — every open SketchyBar issue, and

@@ -74,9 +74,6 @@ public enum ConfigDecoder {
     /// indistinguishable from a bug. Warn, name the milestone, and carry on.
     private static let unimplemented: [String: String] = [
         "blur_radius": "blur is not implemented yet (M3)",
-        "corner_radius": "the bar's own corner is not drawn yet; item and group corners are",
-        "border_width": "the bar's own border is not drawn yet; item and group borders are",
-        "border_color": "the bar's own border is not drawn yet; item and group borders are",
         "axis": "the layout engine is horizontal-only; a vertical bar is M3",
     ]
 
@@ -430,7 +427,7 @@ public enum ConfigDecoder {
 
     private static func decodePopup(_ reader: ConfigReader) -> PopupSpec {
         reader.warnUnknownKeys(["on", "trigger", "dismiss", "axis", "style", "alignment", "rows"])
-        for key in ["axis", "alignment"] where reader.has(key) {
+        for key in ["axis"] where reader.has(key) {
             reader.sink.warn(
                 "'popup.\(key)' has no effect yet: popup rows are always a vertical, left-aligned stack",
                 at: reader.table[key]?.location ?? reader.location)

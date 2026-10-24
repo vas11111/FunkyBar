@@ -162,7 +162,7 @@ final class TextLayer: CALayer {
     }
     /// Mirrors sketchybar's `CGContextSetAllowsFontSmoothing`, off by default.
     var allowsFontSmoothing = false {
-        didSet { setNeedsDisplay() }
+        didSet { if oldValue != allowsFontSmoothing { setNeedsDisplay() } }
     }
 
     override init() {
