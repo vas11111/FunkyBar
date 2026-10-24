@@ -19,21 +19,31 @@ final class BarRuntime {
     private var providers: [String: any Provider] = [:]
     private var inputs = ConfigResolver.Inputs()
     private var configPath: String?
-    private var configWatcher: DispatchSourceFileSystemObject?
+    private var configWatcher: FileWatcher?
+    private var lastUpdates: [String: ProviderUpdate] = [:]
+    private var generation = UUID()
+    private var isRunning = false
+    private var powerObservers: [NSObjectProtocol] = []
+    private var sleepReasons = Set<Notification.Name>()
 
     // MARK: - Lifecycle
 
     func start(configPath path: String?) throws {
         configPath = path
         try loadConfig()
+        isRunning = true
         controller.onEvent = { [weak self] event in self?.handle(event) }
         controller.onPopupAction = { [weak self] itemID, action in
-            self?.providers[itemID]?.handle(command: action)
+            guard let self, let item = self.config.item(withID: itemID) else { return }
+            let providerID = item.repeatValue.map { String(item.id.dropLast($0.count + 1)) } ?? item.id
+            let generation = self.generation
+            self.providers[providerID]?.handle(command: action)
             // The popup should reflect the result of what was just clicked, so
             // refresh the provider rather than wait for its next tick.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 MainActor.assumeIsolated {
-                    guard let self, let provider = self.providers[itemID],
+                    guard let self, self.isRunning, self.generation == generation,
+                          let provider = self.providers[providerID],
                           let update = provider.refresh() else { return }
                     self.ingest(update)
                     self.rebuild()
@@ -47,10 +57,18 @@ final class BarRuntime {
     }
 
     func stop() {
+        isRunning = false
+        generation = UUID()
         for provider in providers.values { provider.stop() }
         providers.removeAll()
         wheel.removeAll()
-        configWatcher?.cancel()
+        configWatcher?.stop()
+        configWatcher = nil
+        for observer in powerObservers {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        powerObservers.removeAll()
+        sleepReasons.removeAll()
         controller.stop()
     }
 
@@ -60,7 +78,7 @@ final class BarRuntime {
     func loadConfig() throws -> ConfigDiagnostics {
         guard let path = configPath else { return ConfigDiagnostics() }
 
-        let source = try String(contentsOfFile: path, encoding: .utf8)
+        let source = try ConfigFile.read(path)
         let table: TOMLTable
         do {
             table = try TOMLParser.parse(source)
@@ -82,8 +100,10 @@ final class BarRuntime {
         guard outcome.isUsable else { throw outcome.diagnostics }
 
         config = outcome.config
+        controller.resetContent()
         controller.apply(config: config.bar)
         rebuildProviders()
+        rebuild()
         return outcome.diagnostics
     }
 
@@ -94,43 +114,27 @@ final class BarRuntime {
     /// is data: it is read, never run, and the watch follows the link.
     private func watchConfig() {
         guard let path = configPath else { return }
-        let resolved = (path as NSString).resolvingSymlinksInPath
-
-        let descriptor = open(resolved, O_EVTONLY)
-        guard descriptor >= 0 else { return }
-
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: descriptor,
-            eventMask: [.write, .rename, .delete],
-            queue: .main
-        )
-        source.setEventHandler { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                // An editor that writes via rename replaces the inode, so
-                // re-establish the watch before reloading.
-                self.configWatcher?.cancel()
-                self.configWatcher = nil
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    MainActor.assumeIsolated {
-                        try? self.loadConfig()
-                        self.rebuild()
-                        self.watchConfig()
-                    }
-                }
+        let watcher = FileWatcher(path: path) { [weak self] in
+            guard let self, self.isRunning else { return }
+            do { try self.loadConfig() }
+            catch {
+                FileHandle.standardError.write(Data("funkybar: reload failed; keeping the current config (\(error))\n".utf8))
             }
         }
-        source.setCancelHandler { close(descriptor) }
-        source.resume()
-        configWatcher = source
+        watcher.start()
+        configWatcher = watcher
     }
 
     // MARK: - Providers
 
     private func rebuildProviders() {
+        generation = UUID()
+        let generation = generation
         for provider in providers.values { provider.stop() }
         providers.removeAll()
         wheel.removeAll()
+        inputs = ConfigResolver.Inputs()
+        lastUpdates.removeAll()
 
         for item in config.allItems {
             guard let binding = item.provider else { continue }
@@ -154,8 +158,8 @@ final class BarRuntime {
 
             providers[templateID] = provider
             provider.start { [weak self] update in
-                self?.ingest(update)
-                self?.rebuild()
+                guard let self, self.generation == generation else { return }
+                if self.ingest(update) { self.rebuild() }
             }
 
             if let update = provider.refresh() { ingest(update) }
@@ -163,8 +167,7 @@ final class BarRuntime {
             if case .interval(let seconds) = provider.policy {
                 wheel.register(id: templateID, interval: seconds) { [weak self, weak provider] in
                     guard let self, let provider, let update = provider.refresh() else { return }
-                    self.ingest(update)
-                    self.rebuild()
+                    if self.ingest(update) { self.rebuild() }
                 }
             }
         }
@@ -182,7 +185,15 @@ final class BarRuntime {
         }
     }
 
-    private func ingest(_ update: ProviderUpdate) {
+    @discardableResult
+    private func ingest(_ update: ProviderUpdate) -> Bool {
+        guard lastUpdates[update.itemID] != update else { return false }
+        if let previous = lastUpdates[update.itemID] {
+            for id in previous.perItem.keys where update.perItem[id] == nil {
+                inputs.values.removeValue(forKey: id)
+            }
+        }
+        lastUpdates[update.itemID] = update
         if Self.traceEvents {
             var parts = update.values.map { "\($0.key)=\($0.value)" }.sorted()
             // Per-clone values are where repeated items carry their data, so a
@@ -205,6 +216,7 @@ final class BarRuntime {
         if let rows = update.rows {
             controller.setPopupRows(rows, for: update.itemID)
         }
+        return true
     }
 
     // MARK: - Drawing
@@ -220,6 +232,7 @@ final class BarRuntime {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.rebuildScheduled = false
+                guard self.isRunning else { return }
                 self.controller.apply(nodes: ConfigResolver.resolve(self.config, inputs: self.inputs))
             }
         }
@@ -234,7 +247,7 @@ final class BarRuntime {
         // A popup with trigger = "hover" opens on enter. Without this the
         // option decoded fine and then did nothing.
         if case .hoverEnter = event.kind {
-            if let item = config.allItems.first(where: { $0.id == event.itemID }),
+            if let item = config.item(withID: event.itemID),
                item.popup?.trigger == .hover {
                 controller.togglePopup(for: event.itemID, config: config, on: event.displayID)
             }
@@ -242,7 +255,7 @@ final class BarRuntime {
         }
 
         guard case .click(let button) = event.kind else { return }
-        guard let item = config.allItems.first(where: { $0.id == event.itemID }) else {
+        guard let item = config.item(withID: event.itemID) else {
             if Self.traceEvents {
                 FileHandle.standardError.write(Data("  no item '\(event.itemID)'\n".utf8))
             }
@@ -265,10 +278,13 @@ final class BarRuntime {
             ProcessRunner(timeout: 10).run(command) { _ in }
 
         case .workspace(let template):
-            let values = inputs.values[event.itemID] ?? [:]
+            let values = ConfigResolver.values(for: item, inputs: inputs)
             let workspace = template.render(values)
             guard !workspace.isEmpty else { return }
-            ProcessRunner(timeout: 3).run("aerospace workspace \(workspace.shellQuoted)") { _ in }
+            let binary: String
+            if case .string(let custom)? = item.provider?.options["binary"]?.value { binary = custom }
+            else { binary = "aerospace" }
+            ProcessRunner(timeout: 3).run(executable: binary, arguments: ["workspace", "--", workspace]) { _ in }
 
         case .provider(let name, let command):
             providers[name]?.handle(command: command)
@@ -289,33 +305,36 @@ final class BarRuntime {
     private func observePower() {
         let workspace = NSWorkspace.shared.notificationCenter
 
-        for name in [
-            NSWorkspace.willSleepNotification,
-            NSWorkspace.screensDidSleepNotification,
-        ] {
-            workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+        let events = [
+            (NSWorkspace.willSleepNotification, NSWorkspace.didWakeNotification),
+            (NSWorkspace.screensDidSleepNotification, NSWorkspace.screensDidWakeNotification),
+        ]
+        for (sleep, wake) in events {
+            powerObservers.append(workspace.addObserver(forName: sleep, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    self?.wheel.suspend()
-                    self?.controller.suspend()
+                    guard let self, self.isRunning else { return }
+                    let wasSleeping = !self.sleepReasons.isEmpty
+                    self.sleepReasons.insert(sleep)
+                    guard !wasSleeping else { return }
+                    self.wheel.suspend()
+                    self.controller.suspend()
                 }
-            }
-        }
-
-        for name in [
-            NSWorkspace.didWakeNotification,
-            NSWorkspace.screensDidWakeNotification,
-        ] {
-            workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+            })
+            powerObservers.append(workspace.addObserver(forName: wake, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    guard let self else { return }
+                    guard let self, self.isRunning else { return }
+                    self.sleepReasons.remove(sleep)
+                    guard self.sleepReasons.isEmpty, self.wheel.isSuspended else { return }
+                    // resume() refreshes interval providers immediately. Only
+                    // event providers need a separate refresh here.
                     self.wheel.resume()
                     self.controller.resume()
-                    for provider in self.providers.values {
+                    for provider in self.providers.values where provider.policy == .event {
                         if let update = provider.refresh() { self.ingest(update) }
                     }
                     self.rebuild()
                 }
-            }
+            })
         }
     }
 

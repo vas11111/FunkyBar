@@ -95,7 +95,7 @@ public struct ConfigReader {
             // Int(Double) is non-failable and traps out of range, so a config
             // saying `max_chars = 1e20` would abort the daemon rather than
             // report a problem.
-            guard value >= -9.2e18, value <= 9.2e18 else {
+            guard let integer = Int(exactly: value) else {
                 sink.error(
                     "'\(label(key))' is too large to be a whole number",
                     at: node.location,
@@ -103,7 +103,7 @@ public struct ConfigReader {
                 )
                 return nil
             }
-            return Int(value)
+            return integer
         default:
             mismatch(key, expected: "a whole number", node: node)
             return nil
@@ -114,7 +114,12 @@ public struct ConfigReader {
         guard let node = table[key] else { return nil }
         switch node.value {
         case .integer(let value): return Double(value)
-        case .double(let value):  return value
+        case .double(let value):
+            guard value.isFinite else {
+                sink.error("'\(label(key))' must be finite", at: node.location)
+                return nil
+            }
+            return value
         default:
             mismatch(key, expected: "a number", node: node)
             return nil
@@ -137,12 +142,12 @@ public struct ConfigReader {
     /// Seconds, accepting a bare number or a `"5s"` / `"250ms"` / `"2m"` string.
     public func duration(_ key: String) -> Double? {
         guard let node = table[key] else { return nil }
-
+        let seconds: Double
         switch node.value {
-        case .integer(let value): return Double(value)
-        case .double(let value):  return value
+        case .integer(let value): seconds = Double(value)
+        case .double(let value):  seconds = value
         case .string(let text):
-            guard let seconds = ConfigReader.parseDuration(text) else {
+            guard let parsed = ConfigReader.parseDuration(text) else {
                 sink.error(
                     "'\(label(key))' is not a valid duration: \"\(text)\"",
                     at: node.location,
@@ -150,11 +155,17 @@ public struct ConfigReader {
                 )
                 return nil
             }
-            return seconds
+            seconds = parsed
         default:
             mismatch(key, expected: "a duration", node: node)
             return nil
         }
+        guard seconds.isFinite, seconds >= 0, seconds <= Double(Int32.max) else {
+            sink.error("'\(label(key))' must be a finite, non-negative duration no greater than \(Int32.max) seconds",
+                       at: node.location)
+            return nil
+        }
+        return seconds
     }
 
     public static func parseDuration(_ text: String) -> Double? {
@@ -165,9 +176,11 @@ public struct ConfigReader {
         for (suffix, scale) in units where trimmed.hasSuffix(suffix) {
             let number = trimmed.dropLast(suffix.count)
             guard let value = Double(number), value >= 0 else { return nil }
-            return value * scale
+            let seconds = value * scale
+            return seconds.isFinite && seconds <= Double(Int32.max) ? seconds : nil
         }
-        guard let value = Double(trimmed), value >= 0 else { return nil }
+        guard let value = Double(trimmed), value.isFinite, value >= 0,
+              value <= Double(Int32.max) else { return nil }
         return value
     }
 
@@ -217,7 +230,10 @@ public struct ConfigReader {
             }
             var font = FontSpec(family: family)
             if let style = reader.string("style") { font.style = style }
-            if let size = reader.length("size") { font.size = size }
+            if let size = reader.length("size") {
+                if size > 0 { font.size = size }
+                else { sink.error("'\(label(key)).size' must be greater than zero", at: node.location) }
+            }
             return font
 
         default:

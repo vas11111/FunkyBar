@@ -68,7 +68,7 @@ public struct Template: Equatable, Hashable, Sendable {
     private static func scan(_ source: String) -> [Segment] {
         var segments: [Segment] = []
         var literal = ""
-        var chars = Array(source)
+        let chars = Array(source)
         var i = 0
 
         func flushLiteral() {

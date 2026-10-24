@@ -22,6 +22,21 @@ public final class PortsProvider: Provider {
     private let watchedPorts: Set<UInt16>
     private let watchedProcesses: [String]
     private var lastScan: Scan?
+    private var targets: [pid_t: ProcessIdentity] = [:]
+
+    private struct ProcessIdentity: Equatable, Sendable {
+        let seconds: UInt64
+        let microseconds: UInt64
+
+        nonisolated static func read(_ pid: pid_t) -> Self? {
+            guard pid > 1, pid != getpid() else { return nil }
+            var info = proc_bsdinfo()
+            guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info,
+                               Int32(MemoryLayout<proc_bsdinfo>.size)) == MemoryLayout<proc_bsdinfo>.size
+            else { return nil }
+            return Self(seconds: info.pbi_start_tvsec, microseconds: info.pbi_start_tvusec)
+        }
+    }
 
     private static let okColor = (try? Color.parse("#56d364").get()) ?? .white
     private static let idleColor = (try? Color.parse("#6e7681").get()) ?? .white
@@ -39,6 +54,10 @@ public final class PortsProvider: Provider {
     public func refresh() -> ProviderUpdate? {
         let scan = Self.scan(ports: watchedPorts, processes: Set(watchedProcesses))
         lastScan = scan
+        targets.removeAll(keepingCapacity: true)
+        for pid in Set(scan.listening.map(\.pid)).union(scan.processIDs.values.flatMap { $0 }) {
+            targets[pid] = ProcessIdentity.read(pid)
+        }
 
         var parts: [String] = []
         for name in watchedProcesses where scan.runningProcesses.contains(name) {
@@ -84,9 +103,9 @@ public final class PortsProvider: Provider {
             ))
         }
 
-        for listener in scan.listening.sorted(by: { $0.port < $1.port }) {
+        for listener in scan.listening.sorted(by: { ($0.port, $0.pid) < ($1.port, $1.pid) }) {
             out.append(PopupRow(
-                id: "port.\(listener.port)",
+                id: "port.\(listener.port).\(listener.pid)",
                 icon: String(listener.port),
                 label: "\(listener.process) ✕",
                 color: Self.textColor,
@@ -109,19 +128,29 @@ public final class PortsProvider: Provider {
         guard parts.count == 3, parts[0] == "kill" else { return }
 
         let target = parts[2]
-        let command: String
+        let pids: Set<pid_t>
         switch parts[1] {
         case "pid":
-            guard let pid = Int32(target) else { return }
-            command = "kill \(pid) 2>/dev/null; sleep 2; kill -9 \(pid) 2>/dev/null; true"
+            guard let pid = Int32(target), pid > 1, targets[pid] != nil else { return }
+            pids = [pid]
         case "name":
-            let quoted = target.shellQuoted
-            command = "pkill -x \(quoted) 2>/dev/null; sleep 2; pkill -9 -x \(quoted) 2>/dev/null; true"
+            guard watchedProcesses.contains(target),
+                  let matching = lastScan?.processIDs[target] else { return }
+            pids = matching
         default:
             return
         }
 
-        ProcessRunner(timeout: 8).run(command) { _ in }
+        for pid in pids {
+            guard let identity = targets[pid], ProcessIdentity.read(pid) == identity else { continue }
+            guard Darwin.kill(pid, SIGTERM) == 0 else { continue }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+                // A process may exit and its pid may be reused during the
+                // grace period. Never escalate against a different process.
+                guard ProcessIdentity.read(pid) == identity else { return }
+                Darwin.kill(pid, SIGKILL)
+            }
+        }
     }
 
     // MARK: - Scanning
@@ -135,6 +164,7 @@ public final class PortsProvider: Provider {
     public struct Scan: Sendable {
         public var listening: Set<Listener>
         public var runningProcesses: Set<String>
+        public var processIDs: [String: Set<pid_t>] = [:]
     }
 
     /// Walks every process's socket descriptors once.
@@ -144,6 +174,10 @@ public final class PortsProvider: Provider {
     public nonisolated static func scan(ports: Set<UInt16>, processes: Set<String>) -> Scan {
         var listening = Set<Listener>()
         var running = Set<String>()
+        var processIDs: [String: Set<pid_t>] = [:]
+        guard !ports.isEmpty || !processes.isEmpty else {
+            return Scan(listening: [], runningProcesses: [])
+        }
 
         // Ask for the buffer size first; the process list changes between
         // calls, so over-allocate rather than assume.
@@ -164,7 +198,10 @@ public final class PortsProvider: Provider {
             guard pid > 0 else { continue }
 
             let name = processName(pid)
-            if !name.isEmpty, processes.contains(name) { running.insert(name) }
+            if !name.isEmpty, processes.contains(name) {
+                running.insert(name)
+                processIDs[name, default: []].insert(pid)
+            }
 
             // Skip the descriptor walk entirely when no ports are watched.
             guard !ports.isEmpty else { continue }
@@ -174,14 +211,14 @@ public final class PortsProvider: Provider {
             }
         }
 
-        return Scan(listening: listening, runningProcesses: running)
+        return Scan(listening: listening, runningProcesses: running, processIDs: processIDs)
     }
 
     private nonisolated static func processName(_ pid: pid_t) -> String {
         var buffer = [CChar](repeating: 0, count: Int(MAXCOMLEN) * 2 + 1)
         let length = proc_name(pid, &buffer, UInt32(buffer.count))
         guard length > 0 else { return "" }
-        return String(cString: buffer)
+        return String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
 
     private nonisolated static func listeningPorts(_ pid: pid_t, wanted: Set<UInt16>) -> [UInt16] {

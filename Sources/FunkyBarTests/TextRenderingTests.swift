@@ -9,13 +9,18 @@ import FunkyBarRender
 // These assert the drawing box, which nothing else covers.
 
 private let shaper = CoreTextShaper()
-private let mono = FontSpec(family: "JetBrainsMono Nerd Font", style: "Bold", size: 14)
+private let mono = FontSpec(
+    family: ProcessInfo.processInfo.environment["FUNKYBAR_TEST_SYSTEM_FONT"] != "1"
+        && FontResolver.isAvailable(FontSpec(family: "JetBrainsMono Nerd Font"))
+        ? "JetBrainsMono Nerd Font" : "Menlo",
+    style: "Bold", size: 14
+)
 
 let textRenderingTests = Suite("Text rendering") { s in
 
     s.test("the font actually resolves, so the rest of this suite means something") { t in
         let font = FontResolver.font(for: mono)
-        t.expectContains(font.fontName, "JetBrains")
+        t.expectContains(font.fontName, mono.family == "Menlo" ? "Menlo" : "JetBrains")
     }
 
     s.test("ink is not anchored at the pen, which is the whole trap") { t in

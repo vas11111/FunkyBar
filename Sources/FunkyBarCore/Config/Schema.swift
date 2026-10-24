@@ -391,4 +391,20 @@ public struct Config: Equatable, Sendable {
             }
         }
     }
+
+    /// Finds the declaration behind an on-screen id, including a clone of a
+    /// provider-driven repeat. Clones inherit actions and popup settings.
+    public func item(withID id: String) -> ItemConfig? {
+        let items = allItems
+        if let exact = items.first(where: { $0.id == id }) { return exact }
+        for item in items {
+            guard case .dynamic = item.repeatSource,
+                  id.hasPrefix(item.id + ".") else { continue }
+            var clone = item
+            clone.id = id
+            clone.repeatValue = String(id.dropFirst(item.id.count + 1))
+            return clone
+        }
+        return nil
+    }
 }

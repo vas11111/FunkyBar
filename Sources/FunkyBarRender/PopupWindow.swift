@@ -26,11 +26,14 @@ final class PopupWindow {
     private let panel: BarPanel
     private let view: BarView
     private let root: CALayer
+    private let content = CALayer()
     private let shaper = CoreTextShaper()
 
     private var rows: [RowLayout] = []
     private var rowLayers: [String: (background: CALayer, icon: TextLayer, label: TextLayer)] = [:]
     private var backdrop: CALayer?
+    private var contentHeight: CGFloat = 0
+    private var scrollOffset: CGFloat = 0
 
     private(set) var itemID: String
     private(set) var isVisible = false
@@ -49,10 +52,13 @@ final class PopupWindow {
         // over its whole area rather than only over rows.
         panel.ignoresMouseEvents = false
         root = view.layer!
-        root.masksToBounds = false
+        root.masksToBounds = true
+        root.addSublayer(content)
 
-        view.onMouseDown = { [weak self] point, _, _ in
-            guard let self, let hit = self.rows.first(where: { $0.frame.contains(point) })
+        view.onMouseDown = { [weak self] point, button, _ in
+            guard button == .left, let self else { return }
+            let local = CGPoint(x: point.x, y: point.y - self.content.frame.minY)
+            guard let hit = self.rows.first(where: { $0.frame.contains(local) })
             else { return }
             guard hit.row.action != nil else { return }
             self.onRowClick?(self.itemID, hit.row)
@@ -60,6 +66,12 @@ final class PopupWindow {
         view.onMouseMoved = { [weak self] point in
             guard point == nil else { return }
             self?.onMouseExit?()
+        }
+        view.onScroll = { [weak self] _, delta, precise in
+            guard let self else { return }
+            self.scrollOffset = min(max(0, self.scrollOffset - delta * (precise ? 1 : 12)),
+                                    max(0, self.contentHeight - self.root.bounds.height))
+            self.positionContent()
         }
     }
 
@@ -75,11 +87,13 @@ final class PopupWindow {
         barConfig: BarConfig,
         contentsScale: CGFloat
     ) {
+        let newRows = newRows.isEmpty
+            ? [PopupRow(id: "empty", label: "No data available")] : newRows
         let iconFont = defaults.icon.font
         let labelFont = defaults.label.font
         let iconPadding = defaults.icon.padding
         let labelPadding = defaults.label.padding
-        let rowHeight = max(20, (iconFont.size + labelFont.size) / 2 + 10)
+        let rowHeight = max(20, max(iconFont.size, labelFont.size) + 10)
         let insets = spec.style.padding
 
         // Two columns: icons left-aligned, labels aligned to the widest icon,
@@ -133,21 +147,25 @@ final class PopupWindow {
         }
         rows = laid
 
-        // Anchor under the item, clamped to the screen.
-        var originX = anchor.minX
-        let maxX = screen.frame.maxX - width - 4
-        originX = min(max(screen.frame.minX + 4, originX), max(screen.frame.minX + 4, maxX))
-        let originY = anchor.minY - height - 4
-
-        panel.setFrame(
-            CGRect(x: originX, y: originY, width: width, height: height),
-            display: false
-        )
-        view.frame = CGRect(origin: .zero, size: CGSize(width: width, height: height))
+        let frame = PopupPlacement.frame(size: CGSize(width: width, height: height),
+                                         anchor: anchor, screen: screen.visibleFrame,
+                                         edge: barConfig.edge, alignment: spec.alignment)
+        contentHeight = height
+        scrollOffset = min(scrollOffset, max(0, height - frame.height))
+        panel.setFrame(frame, display: false)
+        view.frame = CGRect(origin: .zero, size: frame.size)
         panel.apply(barConfig)
 
-        draw(spec: spec, defaults: defaults, size: CGSize(width: width, height: height),
+        draw(spec: spec, defaults: defaults, size: frame.size,
              contentsScale: contentsScale)
+    }
+
+    private func positionContent() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        content.frame = CGRect(x: 0, y: root.bounds.height - contentHeight + scrollOffset,
+                               width: root.bounds.width, height: contentHeight)
+        CATransaction.commit()
     }
 
     private func draw(spec: PopupSpec, defaults: DefaultsConfig, size: CGSize, contentsScale: CGFloat) {
@@ -155,10 +173,13 @@ final class PopupWindow {
         CATransaction.setDisableActions(true)
 
         root.frame = CGRect(origin: .zero, size: size)
+        root.cornerRadius = CGFloat(spec.style.corner.radius)
+        root.cornerCurve = spec.style.corner.style == .squircle ? .continuous : .circular
+        positionContent()
 
         let backdropLayer = backdrop ?? {
             let layer = CALayer()
-            root.addSublayer(layer)
+            root.insertSublayer(layer, at: 0)
             backdrop = layer
             return layer
         }()
@@ -168,6 +189,7 @@ final class PopupWindow {
         backdropLayer.borderColor = spec.style.borderColor.cgColor
         backdropLayer.borderWidth = CGFloat(spec.style.borderWidth)
         backdropLayer.cornerRadius = CGFloat(spec.style.corner.radius)
+        backdropLayer.cornerCurve = root.cornerCurve
 
         var live = Set<String>()
         for layout in rows {
@@ -178,11 +200,15 @@ final class PopupWindow {
                 let label = TextLayer()
                 for layer in [background, icon, label] as [CALayer] {
                     layer.contentsScale = contentsScale
-                    root.addSublayer(layer)
+                    content.addSublayer(layer)
                 }
                 rowLayers[layout.row.id] = (background, icon, label)
                 return (background, icon, label)
             }()
+
+            for layer in [layers.background, layers.icon, layers.label] as [CALayer] {
+                layer.contentsScale = contentsScale
+            }
 
             layers.background.frame = layout.frame
             layers.background.backgroundColor = NSColor.clear.cgColor

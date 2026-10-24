@@ -22,10 +22,10 @@ public struct FontSpec: Equatable, Hashable, Sendable {
         case 1:
             return FontSpec(family: String(parts[0]))
         case 2:
-            guard let size = Double(parts[1]) else { return nil }
+            guard let size = Double(parts[1]), size.isFinite, size > 0 else { return nil }
             return FontSpec(family: String(parts[0]), size: size)
         case 3:
-            guard let size = Double(parts[2]) else { return nil }
+            guard let size = Double(parts[2]), size.isFinite, size > 0 else { return nil }
             return FontSpec(family: String(parts[0]), style: String(parts[1]), size: size)
         default:
             return nil

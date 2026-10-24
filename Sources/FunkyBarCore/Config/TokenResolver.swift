@@ -11,6 +11,10 @@ import Foundation
 /// token.
 public enum TokenResolver {
     private static let maxDepth = 16
+    private struct Budget {
+        var remaining = 20_000
+        var reported = false
+    }
 
     public static func resolve(
         _ root: TOMLTable,
@@ -26,6 +30,10 @@ public enum TokenResolver {
         for _ in 0 ..< maxDepth {
             var pass = ConfigDiagnostics()
             let next = substitute(in: settled, theme: settled, diagnostics: &pass)
+            if pass.hasErrors {
+                diagnostics.merge(pass)
+                return root
+            }
             if next == settled { break }
             settled = next
         }
@@ -70,9 +78,24 @@ public enum TokenResolver {
         theme: TOMLTable,
         diagnostics: inout ConfigDiagnostics
     ) -> TOMLTable {
+        var budget = Budget()
+        return substitute(in: table, theme: theme, diagnostics: &diagnostics,
+                          depth: 0, budget: &budget)
+    }
+
+    private static func substitute(
+        in table: TOMLTable,
+        theme: TOMLTable,
+        diagnostics: inout ConfigDiagnostics,
+        depth: Int,
+        budget: inout Budget
+    ) -> TOMLTable {
         var out = TOMLTable(location: table.location)
         for (key, node) in table.entries {
-            out.insert(substitute(node: node, theme: theme, diagnostics: &diagnostics), for: key)
+            let resolved = substitute(node: node, theme: theme, diagnostics: &diagnostics,
+                                      depth: depth + 1, budget: &budget)
+            out.insert(resolved, for: key)
+            if budget.remaining <= 0 { break }
         }
         return out
     }
@@ -80,8 +103,24 @@ public enum TokenResolver {
     private static func substitute(
         node: TOMLNode,
         theme: TOMLTable,
-        diagnostics: inout ConfigDiagnostics
+        diagnostics: inout ConfigDiagnostics,
+        depth: Int,
+        budget: inout Budget
     ) -> TOMLNode {
+        guard depth <= 64, budget.remaining > 0 else {
+            if !budget.reported {
+                diagnostics.error("theme expansion exceeds the nesting or size limit", at: node.location,
+                                  hint: "remove recursive table/array tokens or reduce the expanded theme")
+                budget.reported = true
+            }
+            return TOMLNode(.string(""), at: node.location)
+        }
+        budget.remaining -= 1
+        if budget.remaining == 0, !budget.reported {
+            diagnostics.error("theme expansion exceeds the size limit", at: node.location,
+                              hint: "remove recursive table/array tokens or reduce the expanded theme")
+            budget.reported = true
+        }
         switch node.value {
         case .string(let text):
             guard let path = tokenPath(text) else { return node }
@@ -98,14 +137,18 @@ public enum TokenResolver {
             return TOMLNode(resolved.value, at: node.location)
 
         case .array(let elements):
-            return TOMLNode(
-                .array(elements.map { substitute(node: $0, theme: theme, diagnostics: &diagnostics) }),
-                at: node.location
-            )
+            var resolved: [TOMLNode] = []
+            for element in elements {
+                resolved.append(substitute(node: element, theme: theme, diagnostics: &diagnostics,
+                                           depth: depth + 1, budget: &budget))
+                if budget.remaining <= 0 { break }
+            }
+            return TOMLNode(.array(resolved), at: node.location)
 
         case .table(let child):
             return TOMLNode(
-                .table(substitute(in: child, theme: theme, diagnostics: &diagnostics)),
+                .table(substitute(in: child, theme: theme, diagnostics: &diagnostics,
+                                  depth: depth, budget: &budget)),
                 at: node.location
             )
 

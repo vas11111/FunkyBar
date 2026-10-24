@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import FunkyBarCore
+import FunkyBarProviders
 
 // The daemon is a plain launchd executable, not an .app bundle. AppKit still
 // needs an NSApplication for windows and workspace notifications, but
@@ -42,14 +43,42 @@ if arguments.contains("--help") || arguments.contains("-h") {
     exit(0)
 }
 
+func usageError(_ message: String) -> Never {
+    FileHandle.standardError.write(Data("funkybar: \(message); see --help\n".utf8))
+    exit(64)
+}
+
+let valuedFlags: Set<String> = ["--config", "-c", "--duration", "--capture", "--capture-popup"]
+let switches: Set<String> = ["--check", "--selftest", "--dump", "--dump-json"]
+var argumentIndex = 0
+while argumentIndex < arguments.count {
+    let argument = arguments[argumentIndex]
+    if valuedFlags.contains(argument) {
+        guard argumentIndex + 1 < arguments.count,
+              !arguments[argumentIndex + 1].hasPrefix("--") else {
+            usageError("missing value for \(argument)")
+        }
+        argumentIndex += 2
+    } else if switches.contains(argument) {
+        argumentIndex += 1
+    } else { usageError("unknown argument \(argument)") }
+}
+if let raw = value(after: "--duration") {
+    guard let seconds = Double(raw), seconds.isFinite, seconds >= 0,
+          seconds <= Double(Int32.max) else {
+        usageError("--duration requires a finite, non-negative number of seconds")
+    }
+}
+if arguments.contains("--capture-popup"), !arguments.contains("--capture") {
+    usageError("--capture-popup requires --capture PATH")
+}
+
 // `--check` validates without touching the display, so it works over ssh and
 // in CI.
 if arguments.contains("--check") {
-    guard let source = try? String(contentsOfFile: configPath, encoding: .utf8) else {
-        FileHandle.standardError.write(Data("funkybar: cannot read \(configPath)\n".utf8))
-        exit(2)
-    }
+    var source = ""
     do {
+        source = try ConfigFile.read(configPath)
         let outcome = ConfigDecoder.decode(try TOMLParser.parse(source))
         if !outcome.diagnostics.isEmpty {
             print(outcome.diagnostics.render(path: configPath, source: source), terminator: "")
@@ -101,7 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try runtime.start(configPath: configPath)
         } catch {
-            FileHandle.standardError.write(Data("funkybar: config is unusable, not starting\n".utf8))
+            FileHandle.standardError.write(Data("funkybar: config is unusable, not starting (\(error))\n".utf8))
             exit(1)
         }
 

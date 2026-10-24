@@ -1,0 +1,48 @@
+name: Verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Prepare the reviewed Swift toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cat .swift-version)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          checksum="$(python3 -c 'import json; print(json.load(open(".security/minimum-versions.json"))["swift"]["macos_package_sha256"])')"
+          package="$RUNNER_TEMP/swift.pkg"
+          curl --proto '=https' --tlsv1.2 --fail --location --retry 3 \
+            "https://download.swift.org/swift-$version-release/xcode/swift-$version-RELEASE/swift-$version-RELEASE-osx.pkg" \
+            --output "$package"
+          printf '%s  %s\n' "$checksum" "$package" | shasum -a 256 -c -
+          pkgutil --check-signature "$package"
+          pkgutil --expand-full "$package" "$RUNNER_TEMP/swift-toolchain"
+          printf '%s\n' "$RUNNER_TEMP/swift-toolchain/swift-$version-RELEASE-osx-package.pkg/Payload/usr/bin" >> "$GITHUB_PATH"
+
+      - name: Verify security policy and dependency coverage
+        run: |
+          python3 -m unittest discover -s .security -p 'test_*.py'
+          python3 .security/check.py --advisories --toolchain swift
+
+      - name: Build and test
+        env:
+          FUNKYBAR_TEST_SYSTEM_FONT: "1"
+        run: |
+          swift build -c release
+          swift run -c release funkybar-test
+          .build/release/funkybard --config funkybar.toml.example --check

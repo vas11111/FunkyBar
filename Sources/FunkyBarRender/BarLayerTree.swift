@@ -1,5 +1,6 @@
 import AppKit
 import FunkyBarCore
+import ImageIO
 
 /// Owns the CALayer tree for one bar and applies layouts to it.
 ///
@@ -27,13 +28,14 @@ final class BarLayerTree {
     }
 
     let root: CALayer
+    private let barBackground = CALayer()
     private let groupBackgrounds = CALayer()
     private let itemBackgrounds = CALayer()
     private let textLayer = CALayer()
 
     private var items: [String: ItemLayers] = [:]
     private var groups: [String: CALayer] = [:]
-    private var imageCache: [String: CGImage] = [:]
+    private let imageCache = NSCache<NSString, CGImage>()
     /// Child artwork layers, keyed by the background layer that owns them.
     private var imageLayers: [ObjectIdentifier: CALayer] = [:]
 
@@ -44,6 +46,9 @@ final class BarLayerTree {
 
     init(root: CALayer) {
         self.root = root
+        imageCache.countLimit = 64
+        imageCache.totalCostLimit = 32 * 1024 * 1024
+        root.addSublayer(barBackground)
         // Three flat containers rather than nesting: group backgrounds must sit
         // under every item, and z-order is then a property of the container
         // rather than of insertion order.
@@ -68,10 +73,18 @@ final class BarLayerTree {
 
     // MARK: - Apply
 
-    func apply(layout: BarLayout, nodes: [ResolvedNode]) {
+    func apply(layout: BarLayout, nodes: [ResolvedNode], config: BarConfig) {
         CATransaction.begin()
         // Implicit animations on a status bar read as lag, not polish.
         CATransaction.setDisableActions(true)
+
+        barBackground.frame = layout.bounds
+        barBackground.contentsScale = scale
+        barBackground.backgroundColor = config.color.cgColor
+        barBackground.borderColor = config.borderColor.cgColor
+        barBackground.borderWidth = CGFloat(config.borderWidth)
+        barBackground.cornerRadius = CGFloat(config.corner.radius)
+        barBackground.cornerCurve = config.corner.style == .squircle ? .continuous : .circular
 
         for container in [groupBackgrounds, itemBackgrounds, textLayer] {
             container.frame = layout.bounds
@@ -96,13 +109,13 @@ final class BarLayerTree {
 
         // Remove what the new layout no longer contains.
         for (id, layers) in items where !liveItems.contains(id) {
-            layers.background?.removeFromSuperlayer()
+            removeBackground(layers.background)
             layers.icon?.removeFromSuperlayer()
             layers.label?.removeFromSuperlayer()
             items.removeValue(forKey: id)
         }
         for (id, layer) in groups where !liveGroups.contains(id) {
-            layer.removeFromSuperlayer()
+            removeBackground(layer)
             groups.removeValue(forKey: id)
         }
 
@@ -131,7 +144,7 @@ final class BarLayerTree {
 
     private func applyGroup(_ frame: GroupFrame, style: StyleSpec) {
         guard style.isVisible, frame.background != .zero else {
-            groups[frame.id]?.removeFromSuperlayer()
+            removeBackground(groups[frame.id])
             groups.removeValue(forKey: frame.id)
             return
         }
@@ -152,13 +165,14 @@ final class BarLayerTree {
             layers.background = layer
             configure(layer, frame: frame.background, style: item.style)
         } else {
-            layers.background?.removeFromSuperlayer()
+            removeBackground(layers.background)
             layers.background = nil
         }
 
         // Icon
         if item.hasIcon {
             let layer = layers.icon ?? makeTextLayer()
+            layer.allowsFontSmoothing = allowsFontSmoothing
             layers.icon = layer
             if layers.iconText != item.icon || layers.iconFont != item.iconFont {
                 layer.shaped = shaper.shape(item.icon, font: item.iconFont)
@@ -177,6 +191,7 @@ final class BarLayerTree {
         // Label
         if item.hasLabel {
             let layer = layers.label ?? makeTextLayer()
+            layer.allowsFontSmoothing = allowsFontSmoothing
             layers.label = layer
             if layers.labelText != item.label || layers.labelFont != item.labelFont {
                 layer.shaped = shaper.shape(item.label, font: item.labelFont)
@@ -265,10 +280,8 @@ final class BarLayerTree {
         let radius = CGFloat(style.corner.radius)
         if layer.cornerRadius != radius {
             layer.cornerRadius = radius
-            // Continuous curvature matches the rest of macOS; the difference is
-            // visible at the 12pt radius this config uses.
-            layer.cornerCurve = style.corner.style == .squircle ? .continuous : .circular
         }
+        layer.cornerCurve = style.corner.style == .squircle ? .continuous : .circular
 
         let borderWidth = CGFloat(style.borderWidth)
         if layer.borderWidth != borderWidth { layer.borderWidth = borderWidth }
@@ -328,15 +341,26 @@ final class BarLayerTree {
     }
 
     private func loadImage(_ path: String) -> CGImage? {
-        if let cached = imageCache[path] { return cached }
-        guard let image = NSImage(contentsOfFile: path),
-              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        if let cached = imageCache.object(forKey: path as NSString) { return cached }
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0, width <= 8192, height <= 8192,
+              width * height <= 16 * 1024 * 1024,
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
         else { return nil }
-        imageCache[path] = cgImage
+        imageCache.setObject(cgImage, forKey: path as NSString, cost: width * height * 4)
         return cgImage
     }
 
+    private func removeBackground(_ layer: CALayer?) {
+        guard let layer else { return }
+        imageLayers.removeValue(forKey: ObjectIdentifier(layer))?.removeFromSuperlayer()
+        layer.removeFromSuperlayer()
+    }
+
     func invalidateImageCache() {
-        imageCache.removeAll()
+        imageCache.removeAllObjects()
     }
 }

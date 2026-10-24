@@ -38,20 +38,21 @@ public final class TimerWheel {
     private var tickInterval: Double = 0
     private(set) public var isSuspended = false
 
-    /// Monotonic seconds, unaffected by clock changes.
-    private var now: Double {
-        Double(clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW)) / 1_000_000_000
-    }
+    private let now: @MainActor () -> Double
+    private var lastTick: Double?
 
-    public init() {}
+    public init(now: @escaping @MainActor () -> Double = { Date().timeIntervalSince1970 }) {
+        self.now = now
+    }
 
     public var registeredCount: Int { entries.count }
     public var currentTickInterval: Double { tickInterval }
 
     public func register(id: String, interval: Double, fire: @escaping @MainActor () -> Void) {
-        let clamped = max(Self.minimumTick, interval)
+        let clamped = Self.normalized(interval)
         entries.removeAll { $0.id == id }
-        entries.append(Entry(id: id, interval: clamped, nextDue: now, fire: fire))
+        entries.append(Entry(id: id, interval: clamped,
+                             nextDue: Self.nextBoundary(after: now(), interval: clamped), fire: fire))
         rebuild()
     }
 
@@ -80,8 +81,9 @@ public final class TimerWheel {
     public func resume() {
         guard isSuspended else { return }
         isSuspended = false
-        let current = now
+        let current = now()
         for index in entries.indices { entries[index].nextDue = current }
+        tick()
         rebuild()
     }
 
@@ -99,8 +101,9 @@ public final class TimerWheel {
         tickInterval = Self.tickInterval(for: entries.map(\.interval))
 
         let source = DispatchSource.makeTimerSource(queue: .main)
+        let delay = Self.nextBoundary(after: now(), interval: tickInterval) - now()
         source.schedule(
-            deadline: .now(),
+            wallDeadline: .now() + max(0, delay),
             repeating: tickInterval,
             leeway: .milliseconds(Int(tickInterval * Self.leewayFraction * 1000))
         )
@@ -113,11 +116,23 @@ public final class TimerWheel {
 
     /// The coarsest tick that can still serve every registered interval.
     public nonisolated static func tickInterval(for intervals: [Double]) -> Double {
-        guard let first = intervals.first else { return minimumTick }
+        guard !intervals.isEmpty else { return minimumTick }
         // Work in whole seconds; sub-second polling has no place on a bar.
-        let seconds = intervals.map { Int(max(minimumTick, $0).rounded()) }
+        let seconds = intervals.map { Int(normalized($0)) }
         let divisor = seconds.reduce(seconds[0]) { gcd($0, $1) }
-        return max(minimumTick, Double(divisor == 0 ? Int(first) : divisor))
+        return max(minimumTick, Double(divisor))
+    }
+
+    private nonisolated static func normalized(_ interval: Double) -> Double {
+        // Keep conversions to Int and Dispatch's nanoseconds representable,
+        // including when a provider is constructed directly rather than from
+        // a validated config.
+        guard interval.isFinite else { return minimumTick }
+        return min(Double(Int32.max), max(minimumTick, interval.rounded(.up)))
+    }
+
+    private nonisolated static func nextBoundary(after time: Double, interval: Double) -> Double {
+        (floor(time / interval) + 1) * interval
     }
 
     private nonisolated static func gcd(_ a: Int, _ b: Int) -> Int {
@@ -127,11 +142,17 @@ public final class TimerWheel {
     }
 
     private func tick() {
-        let current = now
-        for index in entries.indices where entries[index].nextDue <= current + 0.001 {
-            entries[index].nextDue = current + entries[index].interval
-            entries[index].fire()
+        let current = now()
+        let clockMovedBack = lastTick.map { current < $0 } ?? false
+        lastTick = current
+        var callbacks: [@MainActor () -> Void] = []
+        for index in entries.indices where clockMovedBack || entries[index].nextDue <= current + 0.001 {
+            entries[index].nextDue = Self.nextBoundary(after: current, interval: entries[index].interval)
+            callbacks.append(entries[index].fire)
         }
+        // Callbacks may register or remove entries; finish walking the array
+        // before invoking any of them.
+        for callback in callbacks { callback() }
     }
 
     /// Drives one tick synchronously. Tests only.

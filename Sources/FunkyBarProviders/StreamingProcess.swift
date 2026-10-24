@@ -12,17 +12,26 @@ import Foundation
 /// window manager does not permanently deafen the bar.
 public final class StreamingProcess: @unchecked Sendable {
 
-    private let command: String
+    private let executable: String
+    private let arguments: [String]
     private let onLine: @MainActor (String) -> Void
     private let queue = DispatchQueue(label: "funkybar.stream", qos: .utility)
 
     private let lock = NSLock()
     private var pid: pid_t = 0
-    private var stopped = false
+    private var stopped = true
     private var restartDelay: Double = 0.5
+    private let pendingLines = DispatchSemaphore(value: 128)
 
     public init(command: String, onLine: @escaping @MainActor (String) -> Void) {
-        self.command = command
+        self.executable = "/bin/sh"
+        self.arguments = ["-c", "exec \(command)"]
+        self.onLine = onLine
+    }
+
+    public init(executable: String, arguments: [String], onLine: @escaping @MainActor (String) -> Void) {
+        self.executable = executable
+        self.arguments = arguments
         self.onLine = onLine
     }
 
@@ -35,6 +44,7 @@ public final class StreamingProcess: @unchecked Sendable {
     /// that window every time.
     public func start() {
         lock.lock()
+        guard stopped else { lock.unlock(); return }
         stopped = false
         lock.unlock()
         spawn()
@@ -44,7 +54,6 @@ public final class StreamingProcess: @unchecked Sendable {
         lock.lock()
         stopped = true
         let child = pid
-        pid = 0
         lock.unlock()
 
         // Signal only. The read loop owns the descriptor and closes it once
@@ -52,6 +61,17 @@ public final class StreamingProcess: @unchecked Sendable {
         // as well would be a double close, and fd numbers get reused, so the
         // second close can land on an unrelated live descriptor.
         terminate(child)
+        // An uncooperative source must not retain a read thread or survive a
+        // reload. The read loop clears pid after reaping, preventing a delayed
+        // signal from hitting a reused pid.
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            defer { self.lock.unlock() }
+            guard self.stopped, self.pid == child, child > 0 else { return }
+            kill(-child, SIGKILL)
+            kill(child, SIGKILL)
+        }
     }
 
     /// Signals the whole process group.
@@ -67,10 +87,12 @@ public final class StreamingProcess: @unchecked Sendable {
     public var isRunning: Bool {
         lock.lock()
         defer { lock.unlock() }
-        return pid > 0
+        return pid > 0 && !stopped
     }
 
     private func spawn() {
+        guard !executable.isEmpty,
+              ([executable] + arguments).allSatisfy({ !$0.utf8.contains(0) }) else { return }
         var fds: [Int32] = [0, 0]
         guard pipe(&fds) == 0 else { return scheduleRestart() }
 
@@ -92,9 +114,9 @@ public final class StreamingProcess: @unchecked Sendable {
         let environment = ProcessInfo.processInfo.environment.map { "\($0.key)=\($0.value)" }
         // `exec` so the shell replaces itself: one process to signal and reap,
         // with no grandchild that can outlive it.
-        let status = withCStringArray(["/bin/sh", "-c", "exec \(command)"]) { argv in
+        let status = withCStringArray([executable] + arguments) { argv in
             withCStringArray(environment) { envp in
-                posix_spawn(&child, "/bin/sh", &actions, &attributes, argv, envp)
+                posix_spawnp(&child, executable, &actions, &attributes, argv, envp)
             }
         }
         close(fds[1])
@@ -113,6 +135,8 @@ public final class StreamingProcess: @unchecked Sendable {
             // Told to stop mid-spawn. Reap here, or it becomes a zombie that
             // is never waited on and the pid is held for the process lifetime.
             terminate(child)
+            kill(-child, SIGKILL)
+            kill(child, SIGKILL)
             close(fds[0])
             var ignored: Int32 = 0
             waitpid(child, &ignored, 0)
@@ -120,20 +144,15 @@ public final class StreamingProcess: @unchecked Sendable {
         }
 
         let readFD = fds[0]
-        queue.async { [weak self] in
-            guard let self else {
-                close(readFD)
-                var ignored: Int32 = 0
-                waitpid(child, &ignored, 0)
-                return
-            }
+        let childPID = child
+        queue.async { [self] in
             self.readLines(from: readFD)
 
             var exitStatus: Int32 = 0
-            waitpid(child, &exitStatus, 0)
+            while waitpid(childPID, &exitStatus, 0) < 0, errno == EINTR {}
 
             self.lock.lock()
-            if self.pid == child { self.pid = 0 }
+            if self.pid == childPID { self.pid = 0 }
             self.lock.unlock()
 
             self.scheduleRestart()
@@ -141,18 +160,25 @@ public final class StreamingProcess: @unchecked Sendable {
     }
 
     private func readLines(from fd: Int32) {
+        defer { close(fd) }
         var pending = Data()
+        var discardingLongLine = false
+        let maximumLineBytes = 64 * 1024
         var buffer = [UInt8](repeating: 0, count: 8192)
 
         while true {
             let count = read(fd, &buffer, buffer.count)
+            if count < 0, errno == EINTR { continue }
             if count <= 0 { break }
             pending.append(contentsOf: buffer[0 ..< count])
 
             // A stream can deliver partial lines, so only dispatch complete ones.
             while let newline = pending.firstIndex(of: 0x0A) {
                 let lineData = pending[pending.startIndex ..< newline]
+                let tooLong = discardingLongLine || lineData.count > maximumLineBytes
                 pending.removeSubrange(pending.startIndex ... newline)
+                discardingLongLine = false
+                guard !tooLong else { continue }
 
                 let line = String(decoding: lineData, as: UTF8.self)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -163,11 +189,31 @@ public final class StreamingProcess: @unchecked Sendable {
                 restartDelay = 0.5
                 lock.unlock()
 
-                let handler = onLine
-                DispatchQueue.main.async { MainActor.assumeIsolated { handler(line) } }
+                // Apply backpressure if the main thread cannot consume a
+                // noisy source. Queueing unlimited callbacks defeats the line
+                // size cap just as effectively as one unlimited line.
+                while pendingLines.wait(timeout: .now() + 0.1) != .success {
+                    lock.lock()
+                    let halted = stopped
+                    lock.unlock()
+                    if halted { return }
+                }
+                let gate = pendingLines
+                DispatchQueue.main.async { [weak self] in
+                    defer { gate.signal() }
+                    guard let self else { return }
+                    self.lock.lock()
+                    let active = !self.stopped
+                    self.lock.unlock()
+                    guard active else { return }
+                    MainActor.assumeIsolated { self.onLine(line) }
+                }
+            }
+            if pending.count > maximumLineBytes {
+                pending.removeAll(keepingCapacity: true)
+                discardingLongLine = true
             }
         }
-        close(fd)
     }
 
     private func scheduleRestart() {
@@ -191,7 +237,7 @@ public final class StreamingProcess: @unchecked Sendable {
 
 /// Watches a file and reports every change.
 ///
-/// Watches the *containing directory*, not the file. Apps that write state
+/// Watches the file and its containing directory. Apps that write state
 /// atomically (temp file, delete, rename) destroy
 /// the inode on every write, so a watch bound to the file itself dies after
 /// the first change and any recovery races the gap where the file does not
@@ -201,72 +247,133 @@ public final class FileWatcher: @unchecked Sendable {
     private let onChange: @MainActor () -> Void
     private let queue = DispatchQueue(label: "funkybar.filewatch", qos: .utility)
 
-    // All mutable state behind one lock. `watch()` runs on the background
-    // queue via the retry path while `stop()` is called from the main actor.
-    private let lock = NSLock()
-    private var source: DispatchSourceFileSystemObject?
-    private var stopped = false
+    // Confined to queue, including start/stop. Generation checks also suppress
+    // deliveries that were already queued on main when the watcher stopped.
+    private var sources: [DispatchSourceFileSystemObject] = []
+    private var running = false
+    private var generation = UUID()
+    private var pending: DispatchWorkItem?
+    private var stamp: Stamp?
+
+    private struct Stamp: Equatable {
+        let resolved: String
+        let exists: Bool
+        let inode: UInt64
+        let size: Int64
+        let modifiedSeconds: Int
+        let modifiedNanos: Int
+        let changedSeconds: Int
+        let changedNanos: Int
+    }
 
     public init(path: String, onChange: @escaping @MainActor () -> Void) {
-        self.path = path
+        self.path = URL(fileURLWithPath: (path as NSString).expandingTildeInPath).path
         self.onChange = onChange
     }
 
     public func start() {
-        lock.lock()
-        stopped = false
-        lock.unlock()
-        watch()
-    }
-
-    private func watch() {
-        lock.lock()
-        let halted = stopped
-        lock.unlock()
-        // Without this the retry path outlives stop(), installing a live
-        // source and a fresh descriptor on a watcher already torn down.
-        guard !halted else { return }
-
-        let directory = (path as NSString).deletingLastPathComponent
-        let descriptor = open(directory, O_EVTONLY)
-        guard descriptor >= 0 else {
-            queue.asyncAfter(deadline: .now() + 2) { [weak self] in self?.watch() }
-            return
+        queue.sync {
+            guard !running else { return }
+            running = true
+            generation = UUID()
+            stamp = currentStamp()
+            watchPaths()
+            if currentStamp() != stamp { scheduleChange() }
         }
-
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: descriptor,
-            eventMask: [.write, .extend, .link, .rename, .delete],
-            queue: queue
-        )
-        source.setEventHandler { [weak self] in
-            guard let self else { return }
-            let handler = self.onChange
-            // A directory event says something in it changed, not what. The
-            // reader re-reads and compares, so a spurious wake is harmless.
-            DispatchQueue.main.async { MainActor.assumeIsolated { handler() } }
-        }
-        source.setCancelHandler { close(descriptor) }
-
-        lock.lock()
-        if stopped {
-            lock.unlock()
-            source.cancel()
-            return
-        }
-        self.source = source
-        lock.unlock()
-
-        source.resume()
     }
 
     public func stop() {
-        lock.lock()
-        stopped = true
-        let live = source
-        source = nil
-        lock.unlock()
-        live?.cancel()
+        queue.sync {
+            running = false
+            generation = UUID()
+            pending?.cancel()
+            pending = nil
+            for source in sources { source.cancel() }
+            sources.removeAll()
+        }
+    }
+
+    deinit {
+        pending?.cancel()
+        for source in sources { source.cancel() }
+    }
+
+    private func currentStamp() -> Stamp {
+        let resolved = (path as NSString).resolvingSymlinksInPath
+        var info = stat()
+        let exists = stat(path, &info) == 0
+        return Stamp(resolved: resolved, exists: exists, inode: UInt64(info.st_ino),
+                     size: info.st_size, modifiedSeconds: info.st_mtimespec.tv_sec,
+                     modifiedNanos: info.st_mtimespec.tv_nsec,
+                     changedSeconds: info.st_ctimespec.tv_sec,
+                     changedNanos: info.st_ctimespec.tv_nsec)
+    }
+
+    private func watchPaths() {
+        for source in sources { source.cancel() }
+        sources.removeAll()
+        guard running else { return }
+
+        // Watch both the symlink's directory and its target's directory. If a
+        // directory does not exist yet, watch its nearest existing ancestor so
+        // creating the missing directories restores the watch automatically.
+        var directories = Set<String>()
+        for file in [path, (path as NSString).resolvingSymlinksInPath] {
+            var directory = (file as NSString).deletingLastPathComponent
+            var isDirectory: ObjCBool = false
+            while !FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory)
+                    || !isDirectory.boolValue {
+                let parent = (directory as NSString).deletingLastPathComponent
+                guard parent != directory, !parent.isEmpty else { break }
+                directory = parent
+            }
+            directories.insert(directory)
+        }
+
+        // Directory events cover replacement, but do not report writes to an
+        // existing file's contents. Watch the live file as well for writers
+        // such as `echo value > state` and editors that save in place.
+        var paths = directories
+        for file in [path, (path as NSString).resolvingSymlinksInPath] {
+            var info = stat()
+            if stat(file, &info) == 0, info.st_mode & S_IFMT == S_IFREG { paths.insert(file) }
+        }
+        for watchedPath in paths {
+            let descriptor = open(watchedPath, O_EVTONLY)
+            guard descriptor >= 0 else { continue }
+            let source = DispatchSource.makeFileSystemObjectSource(
+                fileDescriptor: descriptor,
+                eventMask: [.write, .extend, .link, .rename, .delete, .revoke, .attrib],
+                queue: queue
+            )
+            source.setEventHandler { [weak self] in self?.scheduleChange() }
+            source.setCancelHandler { close(descriptor) }
+            source.activate()
+            sources.append(source)
+        }
+    }
+
+    private func scheduleChange() {
+        guard running else { return }
+        pending?.cancel()
+        let generation = generation
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.running, self.generation == generation else { return }
+            let newStamp = self.currentStamp()
+            let changed = newStamp != self.stamp
+            self.stamp = newStamp
+            self.watchPaths()
+            if self.currentStamp() != newStamp { self.scheduleChange() }
+            guard changed else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let active = self.queue.sync { self.running && self.generation == generation }
+                guard active else { return }
+                MainActor.assumeIsolated { self.onChange() }
+            }
+        }
+        pending = work
+        queue.asyncAfter(deadline: .now() + 0.05, execute: work)
     }
 }
 
